@@ -1,0 +1,107 @@
+group = 'ai.decart.vton.flutter'
+version = '0.1.0'
+
+// ── Overridable versions ─────────────────────────────────────────────────────
+//
+// All four are readable from the consuming app's gradle.properties, because a
+// Flutter plugin's Gradle build is a subproject of the app's build and hard
+// pins here turn into version conflicts there.
+//
+//   decartAndroidSdkVersion=0.7.9     # the Decart SDK release to bind against
+//   decartAgpVersion=8.7.3            # match your app's AGP
+//   decartKotlinVersion=2.1.0         # match your app's Kotlin (must be >= 2.1)
+//   decartCompileSdk=36               # match your app's compileSdk
+//
+// The AGP and Kotlin defaults target the Flutter 3.24–3.32 generation. Newer
+// Flutter templates ship AGP 9.x and Kotlin 2.3.x; if your app uses those, set
+// the two properties above to match, or Gradle will report the Android/Kotlin
+// plugin appearing on the buildscript classpath with two different versions.
+def decartAndroidSdkVersion = project.findProperty('decartAndroidSdkVersion') ?: '0.7.9'
+def decartAgpVersion = project.findProperty('decartAgpVersion') ?: '8.7.3'
+def decartKotlinVersion = project.findProperty('decartKotlinVersion') ?: '2.1.0'
+def decartCompileSdk = (project.findProperty('decartCompileSdk') ?: '36') as Integer
+
+buildscript {
+    // Re-read here: the buildscript block is evaluated before the script body.
+    def agp = project.findProperty('decartAgpVersion') ?: '8.7.3'
+    def kotlin = project.findProperty('decartKotlinVersion') ?: '2.1.0'
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath "com.android.tools.build:gradle:$agp"
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin"
+    }
+}
+
+apply plugin: 'com.android.library'
+apply plugin: 'org.jetbrains.kotlin.android'
+
+repositories {
+    google()
+    mavenCentral()
+    // The Decart Android SDK is published through JitPack, not Maven Central.
+    //
+    // IMPORTANT — this block is necessary but NOT sufficient.
+    //
+    // Gradle resolves a configuration using the repositories of the project
+    // that *owns* the configuration. This block therefore covers the plugin's
+    // own compile classpath (`:decart_vton_flutter:compileDebugKotlin`) and
+    // nothing else. When the app assembles `:app:debugRuntimeClasspath` it
+    // pulls this plugin's transitive dependencies using the APP's repositories,
+    // where JitPack is absent — and the build dies with
+    // "Could not find com.github.DecartAI:decart-android".
+    //
+    // So the consuming app must also declare JitPack. There is no way for a
+    // plugin to do this on the app's behalf without reaching into the root
+    // project, which modern Gradle rightly discourages. See README >
+    // Android setup; `tool/bootstrap_example.sh` does it for the example app.
+    maven { url 'https://jitpack.io' }
+}
+
+android {
+    namespace 'ai.decart.vton.flutter'
+    compileSdk decartCompileSdk
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    sourceSets {
+        main.java.srcDirs += 'src/main/kotlin'
+        test.java.srcDirs += 'src/test/kotlin'
+    }
+
+    defaultConfig {
+        // The Decart SDK itself declares minSdk 24. Anything lower fails to
+        // merge the manifest. (Current Flutter templates already default to 24,
+        // so this is usually a no-op.)
+        minSdk 24
+        consumerProguardFiles 'consumer-rules.pro'
+    }
+
+    lint {
+        disable 'InvalidPackage'
+    }
+}
+
+// The `kotlin { compilerOptions { … } }` form rather than the older
+// `android { kotlinOptions { … } }`: `kotlinOptions` is deprecated across
+// Kotlin 2.x and removed in later 2.x releases, and this plugin already
+// requires Kotlin 2.1+. Matches what Flutter's own current plugin template
+// generates.
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+    }
+}
+
+dependencies {
+    implementation "com.github.DecartAI:decart-android:$decartAndroidSdkVersion"
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
+    // livekit-android and the webrtc artifact arrive transitively at `api`
+    // scope from the Decart SDK, so the renderer types used by
+    // VtonVideoPlatformView are on the compile classpath already.
+}

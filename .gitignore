@@ -1,0 +1,42 @@
+# Secrets — never commit a real key.
+.env
+example/.env
+*.env.local
+
+# Dart / Flutter
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+pubspec.lock
+doc/api/
+
+# Android
+android/.gradle/
+android/local.properties
+example/android/.gradle/
+example/android/local.properties
+example/android/app/src/main/assets/
+*.iml
+.gradle/
+
+# iOS / macOS
+ios/.symlinks/
+ios/Pods/
+ios/.packages
+example/ios/Pods/
+example/ios/.symlinks/
+example/ios/Flutter/Flutter.podspec
+example/ios/Flutter/flutter_export_environment.sh
+example/ios/Runner.xcworkspace/xcuserdata/
+example/ios/Runner.xcodeproj/xcuserdata/
+.DS_Store
+
+# mac_bridge.sh scratch — command channel between the Cowork session and macOS
+.bridge/
+
+# IDE
+.idea/
+.vscode/
+*.iws

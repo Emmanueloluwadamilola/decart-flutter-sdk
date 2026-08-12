@@ -1,0 +1,383 @@
+package ai.decart.vton.flutter
+
+import ai.decart.sdk.DecartClient
+import ai.decart.sdk.DecartClientConfig
+import ai.decart.sdk.ImageUtils
+import ai.decart.sdk.LogLevel
+import ai.decart.sdk.RealtimeModel
+import ai.decart.sdk.realtime.CheckConnectivityOptions
+import ai.decart.sdk.realtime.ConnectOptions
+import ai.decart.sdk.realtime.InitialPrompt
+import ai.decart.sdk.realtime.RealTimeClient
+import ai.decart.sdk.realtime.RealtimeMediaStream
+import ai.decart.vton.flutter.ChannelCodec.bool
+import ai.decart.vton.flutter.ChannelCodec.bytes
+import ai.decart.vton.flutter.ChannelCodec.long
+import ai.decart.vton.flutter.ChannelCodec.stringOrNull
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+
+/**
+ * Everything stateful about a Decart session on Android.
+ *
+ * Kept separate from [DecartVtonPlugin] so the plugin class stays a thin
+ * dispatcher: the plugin decodes the channel call and this class talks to the
+ * SDK. All public methods here are expected to be invoked on the main
+ * dispatcher (the plugin's scope guarantees that).
+ */
+internal class VtonSessionController(
+    private val context: Context,
+    private val scope: CoroutineScope,
+    private val events: VtonEventDispatcher,
+    private val views: VtonVideoViewRegistry,
+) {
+
+    private var client: DecartClient? = null
+    private var realtime: RealTimeClient? = null
+
+    private var localStream: RealtimeMediaStream? = null
+    private var remoteStream: RealtimeMediaStream? = null
+
+    private var model: RealtimeModel? = null
+    private var supportsReferenceImage: Boolean = true
+
+    private val collectors = mutableListOf<Job>()
+
+    // ── lifecycle ────────────────────────────────────────────────────────────
+
+    fun initialize(args: Map<String, Any?>) {
+        release()
+
+        val apiKey = args["apiKey"] as? String
+        if (apiKey.isNullOrBlank()) {
+            throw VtonPluginException(
+                ErrorCodes.INVALID_API_KEY,
+                "apiKey must be a non-empty string.",
+            )
+        }
+
+        val created = DecartClient(
+            context = context.applicationContext,
+            config = DecartClientConfig(
+                apiKey = apiKey,
+                baseUrl = args.stringOrNull("signalingBaseUrl") ?: "wss://api.decart.ai",
+                httpBaseUrl = args.stringOrNull("httpBaseUrl") ?: "https://api.decart.ai",
+                logLevel = logLevel(args.stringOrNull("logLevel")),
+            ),
+        )
+        client = created
+        realtime = created.realtime
+        startCollectors(created.realtime)
+    }
+
+    /**
+     * Opens a session and returns the server-assigned session id when it is
+     * already known by the time `connect` resolves.
+     *
+     * Ordering matters here. The local stream is created *before* `connect` so
+     * that (a) the preview is live while the handshake runs, and (b) preview
+     * and publish share one LiveKit `Room` — which the SDK explicitly
+     * recommends, and which is what makes the local `VtonLocalPreview` able to
+     * find an `EglBase`.
+     */
+    suspend fun connect(args: Map<String, Any?>): String? {
+        val realtimeClient = requireRealtime()
+        ensureCameraPermission()
+
+        // Any previous session's resources go first — connect() on the SDK also
+        // calls disconnect(), but it does not own our caller-created stream.
+        teardownStreams()
+
+        val requestedModel = ChannelCodec.realtimeModel(args)
+        val requestedConfig = ChannelCodec.realtimeConfiguration(args)
+        val requestedFacing = ChannelCodec.facing(args.stringOrNull("facing"))
+        val requestedMirror = ChannelCodec.mirror(args.stringOrNull("mirror"))
+        val requestedResolution = ChannelCodec.resolution(args.stringOrNull("resolution"))
+
+        model = requestedModel
+        supportsReferenceImage = args.bool("supportsReferenceImage", true)
+
+        val prompt = args.stringOrNull("prompt")?.takeIf { it.isNotBlank() }
+        val imageBase64 = args.bytes("referenceImage")
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { ImageUtils.byteArrayToBase64(it) }
+        val enhance = args.bool("enhance", true)
+
+        val stream = try {
+            realtimeClient.createLocalVideoStream(
+                model = requestedModel,
+                facing = requestedFacing,
+                configuration = requestedConfig,
+                mirror = requestedMirror,
+            )
+        } catch (e: Throwable) {
+            throw VtonPluginException(
+                cameraFailureCode(e),
+                "Could not start the camera: ${e.message ?: e::class.java.simpleName}. " +
+                    "Check that android.permission.CAMERA is granted and that no other " +
+                    "app holds the camera.",
+                cause = e,
+            )
+        }
+        localStream = stream
+        views.setLocal(stream)
+        events.send(ChannelCodec.localStreamEvent())
+
+        val remote = try {
+            realtimeClient.connect(
+                options = ConnectOptions(
+                    model = requestedModel,
+                    initialPrompt = prompt?.let { InitialPrompt(text = it, enhance = enhance) },
+                    // Note: when only a prompt is supplied the SDK sends a
+                    // `prompt` initial-state message rather than a `set_image`
+                    // one. That is harmless at connect time (there is no image
+                    // to clear on a fresh session) and matches what iOS ends up
+                    // doing. Mid-session updates DO need the routing — see
+                    // setOutfit().
+                    initialImage = imageBase64,
+                    resolution = requestedResolution,
+                    realtimeConfiguration = requestedConfig,
+                    publishCamera = true,
+                    facing = requestedFacing,
+                    mirror = requestedMirror,
+                ),
+                localStream = stream,
+            )
+        } catch (e: Throwable) {
+            // Do not leak the camera if the handshake failed.
+            teardownStreams()
+            throw e
+        }
+
+        remoteStream = remote
+        views.setRemote(remote)
+
+        return realtimeClient.sessionId
+    }
+
+    /**
+     * Applies a complete try-on state.
+     *
+     * The branch below is the whole reason this wrapper exists on Android.
+     * The iOS SDK's single `setPrompt` routes to a `set_image` signalling
+     * message whenever the model declares `hasReferenceImage`; the Android SDK
+     * does no such routing and would send a plain `prompt` message. That
+     * difference is observable: a `prompt` message leaves a previously-set
+     * garment image in place, while `set_image` with a null image clears it.
+     * Replicating iOS's rule here is what makes `setOutfit` mean the same thing
+     * on both platforms.
+     */
+    suspend fun setOutfit(args: Map<String, Any?>) {
+        val realtimeClient = requireRealtime()
+        if (!realtimeClient.isConnected()) {
+            throw VtonPluginException(
+                ErrorCodes.NOT_CONNECTED,
+                "No live session. Call connect() before setOutfit().",
+            )
+        }
+
+        val prompt = args.stringOrNull("prompt")?.takeIf { it.isNotBlank() }
+        val imageBytes = args.bytes("referenceImage")?.takeIf { it.isNotEmpty() }
+        val enhance = args.bool("enhance", true)
+        val timeoutMs = args.long("timeoutMs", 30_000L)
+
+        if (prompt == null && imageBytes == null) {
+            throw VtonPluginException(
+                ErrorCodes.INVALID_INPUT,
+                "setOutfit needs a prompt, a reference image, or both.",
+            )
+        }
+        if (imageBytes != null && !supportsReferenceImage) {
+            throw VtonPluginException(
+                ErrorCodes.INVALID_INPUT,
+                "Model ${model?.name} does not accept a reference image.",
+            )
+        }
+
+        if (supportsReferenceImage) {
+            // set_image carries prompt + image + enhance atomically, and a null
+            // image explicitly clears the previous one. This is the whole-state
+            // replace the API documents.
+            realtimeClient.setImage(
+                imageBase64 = imageBytes?.let { ImageUtils.byteArrayToBase64(it) },
+                prompt = prompt,
+                enhance = enhance,
+                timeout = timeoutMs,
+            )
+        } else {
+            realtimeClient.setPrompt(
+                prompt = prompt ?: "",
+                enhance = enhance,
+                timeoutMs = timeoutMs,
+            )
+        }
+    }
+
+    // Note: there is deliberately no `switchCamera` here. Flipping the camera is
+    // orchestrated in Dart as disconnect + reconnect, so that Android and iOS
+    // do exactly the same thing. See DecartVton.switchCamera().
+
+    suspend fun checkConnectivity(args: Map<String, Any?>): Map<String, Any?> {
+        val realtimeClient = requireRealtime()
+        val report = realtimeClient.checkConnectivity(
+            CheckConnectivityOptions(
+                iceGatherTimeoutMs = args.long("timeoutMs", 5_000L),
+            ),
+        )
+        return mapOf(
+            "quality" to ChannelCodec.qualityToWire(report.quality),
+            "transport" to ChannelCodec.transportToWire(report.metrics.transport),
+            "roundTripMs" to report.metrics.rttMs?.toInt(),
+        )
+    }
+
+    fun isConnected(): Boolean = realtime?.isConnected() ?: false
+
+    fun disconnect() {
+        realtime?.disconnect()
+        teardownStreams()
+    }
+
+    fun release() {
+        collectors.forEach { it.cancel() }
+        collectors.clear()
+        try {
+            realtime?.disconnect()
+        } catch (_: Throwable) {
+            // best effort
+        }
+        teardownStreams()
+        try {
+            client?.release()
+        } catch (_: Throwable) {
+            // best effort
+        }
+        client = null
+        realtime = null
+        model = null
+    }
+
+    // ── internals ────────────────────────────────────────────────────────────
+
+    private fun requireRealtime(): RealTimeClient = realtime
+        ?: throw VtonPluginException(
+            ErrorCodes.NOT_INITIALIZED,
+            "initialize() has not been called, or the client was released.",
+        )
+
+    /**
+     * Disposes the caller-owned local stream.
+     *
+     * The SDK is explicit that failing to dispose a caller-created stream leaks
+     * the underlying LiveKit `Room` and its native resources. The remote stream
+     * is SDK-owned and is torn down by `disconnect()`, so it is only dropped
+     * from our references here.
+     */
+    private fun teardownStreams() {
+        views.clearStreams()
+        localStream?.let { runCatching { it.dispose() } }
+        localStream = null
+        remoteStream = null
+    }
+
+    private fun startCollectors(realtimeClient: RealTimeClient) {
+        collectors += scope.launch {
+            realtimeClient.connectionState.collect { state ->
+                events.send(ChannelCodec.connectionStateEvent(state))
+            }
+        }
+        collectors += scope.launch {
+            realtimeClient.errors.collect { error ->
+                val (code, message) = error.toChannelError()
+                events.send(ChannelCodec.errorEvent(code, message))
+            }
+        }
+        collectors += scope.launch {
+            realtimeClient.sessionStarted.collect { started ->
+                if (started != null) {
+                    events.send(
+                        ChannelCodec.sessionStartedEvent(
+                            started.sessionId,
+                            started.subscribeToken,
+                        ),
+                    )
+                }
+            }
+        }
+        collectors += scope.launch {
+            realtimeClient.generationTicks.collect { tick ->
+                events.send(ChannelCodec.generationTickEvent(tick.seconds))
+            }
+        }
+        collectors += scope.launch {
+            realtimeClient.remoteStreamUpdates.collect { stream ->
+                remoteStream = stream
+                views.setRemote(stream)
+                events.send(ChannelCodec.remoteStreamEvent())
+            }
+        }
+        collectors += scope.launch {
+            realtimeClient.localStreamUpdates.collect { stream ->
+                // Only adopt streams we did not create ourselves; connect()
+                // already registered its own and re-registering would rebind
+                // the renderer for no reason.
+                if (stream !== localStream) {
+                    localStream = stream
+                    views.setLocal(stream)
+                    events.send(ChannelCodec.localStreamEvent())
+                }
+            }
+        }
+        collectors += scope.launch {
+            realtimeClient.connectionQuality.collect { report ->
+                if (report != null) {
+                    events.send(
+                        ChannelCodec.connectionQualityEvent(
+                            quality = report.quality,
+                            rttMs = report.metrics.rttMs,
+                            packetLoss = report.metrics.packetLoss,
+                            jitterMs = report.metrics.upstreamJitterMs,
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    // The SDK's LogLevel has exactly four cases (DEBUG/INFO/WARN/ERROR), which
+    // is why VtonLogLevel on the Dart side has four too.
+    private fun logLevel(wire: String?): LogLevel = when (wire) {
+        "debug" -> LogLevel.DEBUG
+        "info" -> LogLevel.INFO
+        "error" -> LogLevel.ERROR
+        else -> LogLevel.WARN
+    }
+
+    /**
+     * Fails fast with a clear code when CAMERA has not been granted.
+     *
+     * Without this the failure arrives much later and much less legibly — LiveKit
+     * opens a capture session that produces no frames, and the connection
+     * eventually times out with a WebRTC error that says nothing about
+     * permissions. Mirrors `ensureCameraAuthorised()` on iOS.
+     */
+    private fun ensureCameraPermission() {
+        val granted = context.checkSelfPermission(Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            throw VtonPluginException(
+                ErrorCodes.PERMISSION_DENIED,
+                "android.permission.CAMERA has not been granted. Request it at " +
+                    "runtime (for example with the permission_handler package) " +
+                    "before calling connect().",
+            )
+        }
+    }
+
+    private fun cameraFailureCode(e: Throwable): String =
+        if (e is SecurityException) ErrorCodes.PERMISSION_DENIED else ErrorCodes.CAMERA_UNAVAILABLE
+}

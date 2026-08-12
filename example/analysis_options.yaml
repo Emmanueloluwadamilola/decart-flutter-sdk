@@ -1,0 +1,7 @@
+include: package:flutter_lints/flutter.yaml
+
+# The example app is illustrative code, not a published API, so the
+# documentation lint the plugin package enforces is not applied here.
+linter:
+  rules:
+    - prefer_single_quotes

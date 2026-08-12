@@ -1,0 +1,22 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Merged into the consuming app. INTERNET and CAMERA are also declared by
+      the Decart SDK's own manifest; declaring them here means an app that
+      depends on this plugin does not have to remember to.
+
+      RECORD_AUDIO is deliberately NOT declared: audio publishing is not
+      implemented in the Decart Android SDK at 0.7.x (`publishMicrophone` is
+      documented as ignored and `RealtimeMediaStream.audioTrack` is always
+      null), so requesting it would be asking users for a permission this
+      plugin cannot use.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+
+</manifest>
