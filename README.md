@@ -492,39 +492,31 @@ Divergences that could not be hidden are listed below.
 
 ## Known limitations
 
-1. **iOS does not currently compile.** The Swift layer is being brought into
-   compliance with Swift 6 strict concurrency; the current blocker is a
-   region-isolation `SendingRisksDataRace` diagnostic around Flutter's
-   non-`Sendable` `FlutterResult` callback. Android builds, and the Dart layer is
-   green (`flutter analyze` clean, 34/34 unit tests passing). Treat iOS as
-   in-progress until this README says otherwise.
-2. **No end-to-end runtime verification yet.** A successful build proves linkage,
-   not that video flows. On-device session testing is outstanding.
-3. **iOS requires Swift Package Manager** and **iOS 17.0**, both forced upstream.
+1. **iOS requires Swift Package Manager** and **iOS 17.0**, both forced upstream.
    CocoaPods-only projects cannot build this plugin.
-4. **`switchCamera()` reconnects the session.** Neither native SDK exposes an
+2. **`switchCamera()` reconnects the session.** Neither native SDK exposes an
    in-session camera flip on its public API at the wrapped versions, so the
    implementation is disconnect → rebuild capture → reconnect. Expect about a
    second of black frames and a new `sessionId`. The previous outfit is restored.
-5. **No audio.** Audio publishing is unimplemented in the Decart Android SDK at
+3. **No audio.** Audio publishing is unimplemented in the Decart Android SDK at
    0.7.x, so the plugin exposes no audio API on either platform rather than
    offering something that half-works.
-6. **No batch/queue API.** Decart's job-based API for pre-recorded video is not
+4. **No batch/queue API.** Decart's job-based API for pre-recorded video is not
    wrapped; this package is realtime-only.
-7. **`errors` is chattier on Android.** The Android SDK has a dedicated error
+5. **`errors` is chattier on Android.** The Android SDK has a dedicated error
    flow; the iOS SDK mostly throws. A quiet `errors` stream on iOS does not mean
    a healthier session.
-8. **`VtonLogLevel` and `signalingBaseUrl` are Android-only.** The iOS SDK has no
+6. **`VtonLogLevel` and `signalingBaseUrl` are Android-only.** The iOS SDK has no
    runtime log level, and takes a single base URL from which it derives the
    signalling endpoint.
-9. **Android rendering uses hybrid composition**, which is correct on every
+7. **Android rendering uses hybrid composition**, which is correct on every
    device but costs more than the texture-layer path. Most noticeable on low-end
    hardware.
-10. **No camera preview before `connect()`.** The capture track is created as part
+8. **No camera preview before `connect()`.** The capture track is created as part
     of connecting, so `VtonLocalPreview` is blank until then.
-11. **Flutter 3.44+ prints a Kotlin Gradle Plugin deprecation warning.** Builds
+9. **Flutter 3.44+ prints a Kotlin Gradle Plugin deprecation warning.** Builds
     work today; migrating to Flutter's Built-in Kotlin is a TODO.
-12. **iOS Simulator cannot capture video.** Physical device only.
+10. **iOS Simulator cannot capture video.** Physical device only.
 
 ---
 
