@@ -1,16 +1,27 @@
 name: decart_vton_flutter
 description: >-
-  Flutter plugin for realtime virtual try-on. Wraps the native Decart Android
-  and iOS SDKs (Lucy VTON) to stream the device camera over WebRTC and render
-  the transformed video back, with live outfit changes via prompt and/or
-  garment reference image.
-version: 0.1.0
-repository: https://github.com/dextercyberlabs/decart_vton_flutter
-issue_tracker: https://github.com/dextercyberlabs/decart_vton_flutter/issues
+  Realtime Decart virtual try-on for Flutter with live camera streaming,
+  garment images, prompts, camera switching, and Android/iOS platform views.
+version: 1.0.0
+homepage: https://github.com/Emmanueloluwadamilola/decart-flutter-sdk
+repository: https://github.com/Emmanueloluwadamilola/decart-flutter-sdk
+issue_tracker: https://github.com/Emmanueloluwadamilola/decart-flutter-sdk/issues
+documentation: https://github.com/Emmanueloluwadamilola/decart-flutter-sdk#readme
+
+topics:
+  - virtual-try-on
+  - fashion
+  - camera
+  - webrtc
+  - ai
+
+screenshots:
+  - description: Full-screen virtual try-on camera with minimal controls.
+    path: screenshots/example.png
 
 environment:
-  sdk: ^3.5.0
-  flutter: '>=3.24.0'
+  sdk: ^3.12.0
+  flutter: '>=3.44.0'
 
 dependencies:
   flutter:
@@ -19,7 +30,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^5.0.0
+  flutter_lints: ^6.0.0
 
 flutter:
   plugin:

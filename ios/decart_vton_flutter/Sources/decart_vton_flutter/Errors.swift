@@ -34,7 +34,7 @@ struct VtonPluginError: Error {
 ///
 /// `DecartError` already carries an `errorCode`, so that branch is exact. The
 /// message-sniffing fallbacks below cover the SDK's plain-`Error` paths — every
-/// literal is one that exists in `decart-ios` v0.6.9. When those strings change
+/// literal is one that exists in `decart-ios` v0.6.10. When those strings change
 /// the worst case is a demotion to `UNKNOWN`, with the message still intact on
 /// the Dart side.
 func classifyError(_ error: Error) -> (code: String, message: String) {

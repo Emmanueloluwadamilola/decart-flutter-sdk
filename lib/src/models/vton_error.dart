@@ -131,7 +131,7 @@ enum VtonErrorCode {
 
 /// The only exception type this package throws.
 ///
-/// A raw [PlatformException] never escapes the plugin: everything crossing the
+/// A raw `PlatformException` never escapes the plugin: everything crossing the
 /// method channel is funnelled through one converter, so callers can write a
 /// single `on DecartVtonException catch (e)` and switch on [code].
 class DecartVtonException implements Exception {
@@ -146,8 +146,8 @@ class DecartVtonException implements Exception {
   /// Convenience constructor for failures raised entirely within the Dart
   /// layer, before anything reached the platform.
   const DecartVtonException.local(this.code, this.message)
-      : nativeCode = null,
-        details = null;
+    : nativeCode = null,
+      details = null;
 
   /// The normalised failure category.
   final VtonErrorCode code;

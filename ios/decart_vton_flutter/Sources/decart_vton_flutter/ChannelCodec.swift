@@ -160,7 +160,7 @@ enum ChannelCodec {
     }
 
     static func sessionStartedEvent(sessionId: String) -> [String: Any?] {
-        // The iOS SDK does not surface `subscribeToken` at v0.6.9 — Android
+        // The iOS SDK does not surface `subscribeToken` at v0.6.10 — Android
         // does. The key is still sent (as nil) so the payload shape matches.
         ["type": "sessionStarted", "sessionId": sessionId, "subscribeToken": nil]
     }

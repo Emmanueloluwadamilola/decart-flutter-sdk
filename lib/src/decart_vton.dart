@@ -11,6 +11,21 @@ import 'models/vton_event.dart';
 import 'models/vton_model.dart';
 import 'models/vton_outfit.dart';
 
+/// Supplies a fresh, short-lived Decart client token (`ek_…`).
+///
+/// The callback should call an authenticated endpoint owned by the host app.
+/// That backend keeps the permanent `dct_…` credential and mints the client
+/// token. The plugin can invoke this callback more than once, including for
+/// reconnects, and never persists the returned token.
+///
+/// Do not return a cached token or ask an end user to paste one. Treat the
+/// endpoint URL as public application configuration and keep authorization in
+/// the host app's normal network/session layer.
+///
+/// See Decart's [client-token guide](https://docs.platform.decart.ai/getting-started/client-tokens)
+/// for backend token creation examples.
+typedef VtonClientTokenProvider = Future<String> Function();
+
 /// Entry point for realtime virtual try-on.
 ///
 /// `DecartVton` is a singleton: `DecartVton()` always returns the same
@@ -23,7 +38,7 @@ import 'models/vton_outfit.dart';
 /// ```dart
 /// final vton = DecartVton();
 ///
-/// await vton.initialize(apiKey: dotenv.env['DECART_API_KEY']!);
+/// await vton.initialize(clientTokenProvider: fetchClientToken);
 /// await vton.connect(
 ///   model: VtonModel.lucyVtonLatest,
 ///   initialOutfit: const VtonOutfit(
@@ -80,6 +95,9 @@ class DecartVton {
   String? _sessionId;
   VtonCameraFacing _facing = VtonCameraFacing.front;
   _ConnectRequest? _lastConnect;
+  _ClientConfiguration? _clientConfiguration;
+  bool _sessionWasDisconnected = false;
+  Future<void> _operationTail = Future<void>.value();
 
   // ─────────────────────────────────────────────────────────── observers ────
 
@@ -114,7 +132,7 @@ class DecartVton {
   /// Whether a session is live and can accept outfit updates.
   bool get isConnected => _connectionState.isLive;
 
-  /// Whether [initialize] has completed successfully.
+  /// Whether [initialize] or [initializeForDevelopment] completed successfully.
   bool get isInitialized => _initialized;
 
   /// The model the current (or most recent) session is using.
@@ -142,19 +160,20 @@ class DecartVton {
 
   // ───────────────────────────────────────────────────────────── methods ────
 
-  /// Creates the native Decart client.
+  /// Configures and creates the native Decart client.
   ///
   /// Call once before [connect]. Calling it again while already initialised is
-  /// a no-op unless [force] is set, in which case the existing client is
-  /// released first (useful when rotating a short-lived client token).
+  /// a no-op unless [force] is set. A fresh token is requested before every new
+  /// public connection, camera switch, or lifecycle restoration.
   ///
-  /// [apiKey] is passed through opaquely. In development that is a permanent
-  /// key (`dct_…`) loaded from `.env`; in production it should be a short-lived
-  /// client token (`ek_…`) minted by your own backend. The plugin cannot tell
-  /// the difference and does not need to — see the README's security section.
+  /// [clientTokenProvider] must obtain a fresh `ek_…` client token from your
+  /// own backend. Permanent Decart credentials are rejected and must never be
+  /// embedded in a mobile app. There is deliberately no raw API-key overload
+  /// on this production method; see [initializeForDevelopment] for local debug
+  /// prototypes.
   ///
-  /// Throws [DecartVtonException] with [VtonErrorCode.invalidApiKey] if the key
-  /// is blank.
+  /// Throws [DecartVtonException] with [VtonErrorCode.invalidApiKey] when the
+  /// provider returns a blank or permanent credential.
   ///
   /// **Platform divergence on the base URLs.** Android accepts
   /// [signalingBaseUrl] and [httpBaseUrl] independently. The iOS SDK takes only
@@ -164,36 +183,64 @@ class DecartVton {
   /// agree, and this never matters; if you do override them, keep them
   /// consistent with that rule.
   Future<void> initialize({
+    required VtonClientTokenProvider clientTokenProvider,
+    String signalingBaseUrl = 'wss://api.decart.ai',
+    String httpBaseUrl = 'https://api.decart.ai',
+    VtonLogLevel logLevel = VtonLogLevel.warn,
+    bool force = false,
+  }) => _serialize(
+    () => _initializeWithConfiguration(
+      _ClientConfiguration(
+        credentialProvider: clientTokenProvider,
+        credentialKind: _CredentialKind.clientToken,
+        signalingBaseUrl: signalingBaseUrl,
+        httpBaseUrl: httpBaseUrl,
+        logLevel: logLevel,
+      ),
+      force: force,
+    ),
+  );
+
+  /// Configures the native client with a permanent API key for local
+  /// development and disposable prototypes only.
+  ///
+  /// This convenience method accepts a `dct_…` key directly so a developer can
+  /// test without first deploying a token server. It throws [StateError] in
+  /// profile and release builds, preventing this path from being shipped as a
+  /// production authentication strategy.
+  ///
+  /// Even in debug builds, the key is compiled into the application and can be
+  /// extracted. Use a separate test key, keep it out of source control, rotate
+  /// it after shared testing, and never distribute the resulting build.
+  /// Production apps must use [initialize] with a [VtonClientTokenProvider].
+  /// Follow Decart's
+  /// [client-token guide](https://docs.platform.decart.ai/getting-started/client-tokens)
+  /// before moving the integration to production.
+  Future<void> initializeForDevelopment({
     required String apiKey,
     String signalingBaseUrl = 'wss://api.decart.ai',
     String httpBaseUrl = 'https://api.decart.ai',
     VtonLogLevel logLevel = VtonLogLevel.warn,
     bool force = false,
-  }) async {
+  }) => _serialize(() {
     _assertNotDisposed();
-    if (apiKey.trim().isEmpty) {
-      throw const DecartVtonException.local(
-        VtonErrorCode.invalidApiKey,
-        'apiKey must not be empty. In development, load DECART_API_KEY from '
-        'your .env file; in production, fetch a short-lived client token from '
-        'your backend.',
+    if (!kDebugMode) {
+      throw StateError(
+        'initializeForDevelopment() is disabled in profile and release builds. '
+        'Use initialize(clientTokenProvider: ...) with short-lived ek_ tokens.',
       );
     }
-    if (_initialized && !force) return;
-    if (_initialized && force) {
-      await _platform.release();
-      _initialized = false;
-    }
-
-    await _platform.initialize(
-      apiKey: apiKey.trim(),
-      signalingBaseUrl: signalingBaseUrl,
-      httpBaseUrl: httpBaseUrl,
-      logLevel: logLevel.name,
+    return _initializeWithConfiguration(
+      _ClientConfiguration(
+        credentialProvider: () async => apiKey,
+        credentialKind: _CredentialKind.developmentApiKey,
+        signalingBaseUrl: signalingBaseUrl,
+        httpBaseUrl: httpBaseUrl,
+        logLevel: logLevel,
+      ),
+      force: force,
     );
-    _initialized = true;
-    _attachNativeEvents();
-  }
+  });
 
   /// Opens a realtime session and starts publishing the camera.
   ///
@@ -225,6 +272,28 @@ class DecartVton {
     VtonResolution? resolution,
     VtonVideoConfig? video,
     Duration connectTimeout = const Duration(seconds: 30),
+  }) => _serialize(
+    () => _connectUnsafe(
+      model: model,
+      initialOutfit: initialOutfit,
+      camera: camera,
+      mirror: mirror,
+      resolution: resolution,
+      video: video,
+      connectTimeout: connectTimeout,
+      refreshToken: true,
+    ),
+  );
+
+  Future<void> _connectUnsafe({
+    required VtonModel model,
+    required VtonOutfit? initialOutfit,
+    required VtonCameraFacing camera,
+    required VtonMirrorMode mirror,
+    required VtonResolution? resolution,
+    required VtonVideoConfig? video,
+    required Duration connectTimeout,
+    required bool refreshToken,
   }) async {
     _assertNotDisposed();
     _assertInitialized();
@@ -232,12 +301,22 @@ class DecartVton {
     if (initialOutfit != null) {
       _validateOutfit(initialOutfit, model);
     }
+    if ((model == VtonModel.lucyVtonLatest || model == VtonModel.lucyVton35) &&
+        resolution == VtonResolution.p1080) {
+      throw const DecartVtonException.local(
+        VtonErrorCode.invalidInput,
+        'VTON 3.5 supports only 720p output. Use VtonResolution.p720 or leave '
+        'resolution unset.',
+      );
+    }
+    if (refreshToken) await _refreshNativeClient();
 
     _model = model;
     _facing = camera;
     _sessionId = null;
     _lastConnect = _ConnectRequest(
       model: model,
+      camera: camera,
       mirror: mirror,
       resolution: resolution,
       video: video,
@@ -263,6 +342,7 @@ class DecartVton {
 
     _sessionId ??= sessionId;
     _currentOutfit = initialOutfit;
+    _sessionWasDisconnected = false;
   }
 
   /// Replaces the entire try-on state on the live session.
@@ -317,6 +397,22 @@ class DecartVton {
     bool enhance = true,
     VtonOutfit? outfit,
     Duration timeout = const Duration(seconds: 30),
+  }) => _serialize(
+    () => _setOutfitUnsafe(
+      prompt: prompt,
+      referenceImage: referenceImage,
+      enhance: enhance,
+      outfit: outfit,
+      timeout: timeout,
+    ),
+  );
+
+  Future<void> _setOutfitUnsafe({
+    required String? prompt,
+    required Uint8List? referenceImage,
+    required bool enhance,
+    required VtonOutfit? outfit,
+    required Duration timeout,
   }) async {
     _assertNotDisposed();
     _assertInitialized();
@@ -346,7 +442,8 @@ class DecartVton {
       model: model,
     );
 
-    final effective = outfit ??
+    final effective =
+        outfit ??
         VtonOutfit(
           prompt: prompt,
           referenceImage: referenceImage,
@@ -364,8 +461,9 @@ class DecartVton {
 
     await _platform.setOutfit(<String, Object?>{
       'prompt': effective.hasPrompt ? effective.prompt!.trim() : null,
-      'referenceImage':
-          effective.hasReferenceImage ? effective.referenceImage : null,
+      'referenceImage': effective.hasReferenceImage
+          ? effective.referenceImage
+          : null,
       'enhance': effective.enhance,
       'timeoutMs': timeout.inMilliseconds,
     });
@@ -377,7 +475,7 @@ class DecartVton {
   ///
   /// **This reconnects the session.** Neither native SDK exposes an in-session
   /// camera flip on its public API at the versions this plugin targets
-  /// (`decart-android` 0.7.9, `decart-ios` v0.6.9), so the honest
+  /// (`decart-android` 0.7.10, `decart-ios` v0.6.10), so the honest
   /// implementation is: tear the session down, rebuild the capture stream on
   /// the other camera, and connect again with the same model, settings and
   /// [currentOutfit]. Expect roughly a second of black frames and a new
@@ -391,7 +489,7 @@ class DecartVton {
   ///
   /// Throws [DecartVtonException] with [VtonErrorCode.notConnected] if there is
   /// no session to switch.
-  Future<VtonCameraFacing> switchCamera() async {
+  Future<VtonCameraFacing> switchCamera() => _serialize(() async {
     _assertNotDisposed();
     _assertInitialized();
     final previous = _lastConnect;
@@ -403,8 +501,8 @@ class DecartVton {
     }
 
     final target = _facing.flipped;
-    await disconnect();
-    await connect(
+    await _disconnectUnsafe();
+    await _connectUnsafe(
       model: previous.model,
       initialOutfit: _currentOutfit,
       camera: target,
@@ -412,9 +510,10 @@ class DecartVton {
       resolution: previous.resolution,
       video: previous.video,
       connectTimeout: previous.connectTimeout,
+      refreshToken: true,
     );
     return _facing;
-  }
+  });
 
   /// Probes whether the network can carry a realtime session, without opening
   /// one.
@@ -428,11 +527,11 @@ class DecartVton {
   /// real GPU time; see IMPLEMENTATION.md if you need it.
   Future<VtonConnectivityReport> checkConnectivity({
     Duration timeout = const Duration(seconds: 5),
-  }) {
+  }) => _serialize(() async {
     _assertNotDisposed();
     _assertInitialized();
     return _platform.checkConnectivity(timeoutMs: timeout.inMilliseconds);
-  }
+  });
 
   /// Ends the session and releases the camera, keeping the native client alive.
   ///
@@ -440,11 +539,42 @@ class DecartVton {
   /// holding a WebRTC session open in the background burns battery and the
   /// session will be dropped by the OS anyway. See `VtonLifecycleObserver` for
   /// a ready-made way to wire that up.
-  Future<void> disconnect() async {
+  Future<void> disconnect() => _serialize(_disconnectUnsafe);
+
+  Future<void> _disconnectUnsafe() async {
     if (_disposed || !_initialized) return;
     await _platform.disconnect();
     _sessionId = null;
+    // Native state events travel over a separate asynchronous channel and can
+    // arrive after this method completes. Remember the completed operation so
+    // an immediate foreground transition does not mistake a stale `connected`
+    // event for a still-live session and skip restoration.
+    _sessionWasDisconnected = true;
   }
+
+  /// Reopens the previous session after an app-lifecycle interruption.
+  ///
+  /// A fresh client token is requested and the latest outfit and camera facing
+  /// are restored. Does nothing when there is no previous session.
+  Future<void> resumeLastSession() => _serialize(() async {
+    _assertNotDisposed();
+    _assertInitialized();
+    final previous = _lastConnect;
+    if (previous == null ||
+        (!_sessionWasDisconnected && _connectionState.isInSession)) {
+      return;
+    }
+    await _connectUnsafe(
+      model: previous.model,
+      initialOutfit: _currentOutfit,
+      camera: _facing,
+      mirror: previous.mirror,
+      resolution: previous.resolution,
+      video: previous.video,
+      connectTimeout: previous.connectTimeout,
+      refreshToken: true,
+    );
+  });
 
   /// Releases every native resource, including the client itself.
   ///
@@ -452,7 +582,7 @@ class DecartVton {
   /// [StateError] — but the cached singleton is cleared, so a subsequent
   /// `DecartVton()` hands back a fresh, usable instance. Hold onto the result
   /// of `DecartVton()` rather than a variable captured before `dispose`.
-  Future<void> dispose() async {
+  Future<void> dispose() => _serialize(() async {
     if (_disposed) return;
     _disposed = true;
     // Without this, `DecartVton()` would keep returning the dead instance and
@@ -469,10 +599,11 @@ class DecartVton {
       }
     }
     _initialized = false;
+    _clientConfiguration = null;
     await _eventController.close();
     await _stateController.close();
     await _errorController.close();
-  }
+  });
 
   // ─────────────────────────────────────────────────────────── internals ────
 
@@ -513,11 +644,98 @@ class DecartVton {
     if (!_errorController.isClosed) _errorController.add(error);
   }
 
-  void _validateOutfit(VtonOutfit outfit, VtonModel model) => _validateFields(
-        prompt: outfit.prompt,
-        referenceImage: outfit.referenceImage,
-        model: model,
+  Future<void> _initializeWithConfiguration(
+    _ClientConfiguration configuration, {
+    required bool force,
+  }) async {
+    _assertNotDisposed();
+    if (_initialized && !force) return;
+    final previousConfiguration = _clientConfiguration;
+    _clientConfiguration = configuration;
+    try {
+      await _refreshNativeClient();
+    } catch (_) {
+      _clientConfiguration = previousConfiguration;
+      rethrow;
+    }
+    _attachNativeEvents();
+  }
+
+  Future<void> _refreshNativeClient() async {
+    final configuration = _clientConfiguration;
+    if (configuration == null) {
+      throw const DecartVtonException.local(
+        VtonErrorCode.notInitialized,
+        'Call initialize(clientTokenProvider: ...) before using the plugin, or '
+        'initializeForDevelopment(apiKey: ...) in a local debug build.',
       );
+    }
+    final rawCredential = await configuration.credentialProvider();
+    final credential = switch (configuration.credentialKind) {
+      _CredentialKind.clientToken => _validateClientToken(rawCredential),
+      _CredentialKind.developmentApiKey => _validateDevelopmentApiKey(
+        rawCredential,
+      ),
+    };
+    if (_initialized) {
+      await _platform.release();
+      _initialized = false;
+    }
+    try {
+      await _platform.initialize(
+        clientToken: credential,
+        signalingBaseUrl: configuration.signalingBaseUrl,
+        httpBaseUrl: configuration.httpBaseUrl,
+        logLevel: configuration.logLevel.name,
+      );
+      _initialized = true;
+    } catch (_) {
+      // Do not claim a released or partially-created native client is usable.
+      _initialized = false;
+      rethrow;
+    }
+  }
+
+  String _validateClientToken(String value) {
+    final token = value.trim();
+    if (!token.startsWith('ek_')) {
+      throw const DecartVtonException.local(
+        VtonErrorCode.invalidApiKey,
+        'The token provider must return a short-lived Decart client token '
+        'beginning with ek_. Permanent or unrecognized credentials are not '
+        'accepted by this mobile SDK.',
+      );
+    }
+    return token;
+  }
+
+  String _validateDevelopmentApiKey(String value) {
+    final apiKey = value.trim();
+    if (!apiKey.startsWith('dct_')) {
+      throw const DecartVtonException.local(
+        VtonErrorCode.invalidApiKey,
+        'initializeForDevelopment() requires a Decart API key beginning with '
+        'dct_. Use initialize(clientTokenProvider: ...) for ek_ client tokens.',
+      );
+    }
+    return apiKey;
+  }
+
+  /// Chains operations while keeping the tail successful after a failure.
+  Future<T> _serialize<T>(Future<T> Function() operation) {
+    final result = _operationTail.then<T>((_) => operation());
+    _operationTail = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return result;
+  }
+
+  void _validateOutfit(VtonOutfit outfit, VtonModel model) => _validateFields(
+    prompt: outfit.prompt,
+    referenceImage: outfit.referenceImage,
+    model: model,
+  );
 
   void _validateFields({
     required String? prompt,
@@ -543,13 +761,57 @@ class DecartVton {
         'send a prompt only.',
       );
     }
+    if (hasImage) _validateReferenceImage(referenceImage);
+  }
+
+  void _validateReferenceImage(Uint8List bytes) {
+    const maxBytes = 5 * 1024 * 1024;
+    if (bytes.length > maxBytes) {
+      throw const DecartVtonException.local(
+        VtonErrorCode.invalidInput,
+        'Reference images must be 5 MB or smaller.',
+      );
+    }
+    final jpeg =
+        bytes.length >= 3 &&
+        bytes[0] == 0xff &&
+        bytes[1] == 0xd8 &&
+        bytes[2] == 0xff;
+    final png =
+        bytes.length >= 8 &&
+        bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4e &&
+        bytes[3] == 0x47 &&
+        bytes[4] == 0x0d &&
+        bytes[5] == 0x0a &&
+        bytes[6] == 0x1a &&
+        bytes[7] == 0x0a;
+    final webp =
+        bytes.length >= 12 &&
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46 &&
+        bytes[8] == 0x57 &&
+        bytes[9] == 0x45 &&
+        bytes[10] == 0x42 &&
+        bytes[11] == 0x50;
+    if (!jpeg && !png && !webp) {
+      throw const DecartVtonException.local(
+        VtonErrorCode.invalidInput,
+        'Reference images must contain JPEG, PNG, or WebP data.',
+      );
+    }
   }
 
   void _assertInitialized() {
     if (!_initialized) {
       throw const DecartVtonException.local(
         VtonErrorCode.notInitialized,
-        'Call DecartVton().initialize(apiKey: ...) before using the plugin.',
+        'Call DecartVton().initialize(clientTokenProvider: ...) before using '
+        'the plugin, or initializeForDevelopment(apiKey: ...) in a local '
+        'debug build.',
       );
     }
   }
@@ -568,6 +830,7 @@ class DecartVton {
 class _ConnectRequest {
   const _ConnectRequest({
     required this.model,
+    required this.camera,
     required this.mirror,
     required this.resolution,
     required this.video,
@@ -575,8 +838,27 @@ class _ConnectRequest {
   });
 
   final VtonModel model;
+  final VtonCameraFacing camera;
   final VtonMirrorMode mirror;
   final VtonResolution? resolution;
   final VtonVideoConfig? video;
   final Duration connectTimeout;
 }
+
+class _ClientConfiguration {
+  const _ClientConfiguration({
+    required this.credentialProvider,
+    required this.credentialKind,
+    required this.signalingBaseUrl,
+    required this.httpBaseUrl,
+    required this.logLevel,
+  });
+
+  final Future<String> Function() credentialProvider;
+  final _CredentialKind credentialKind;
+  final String signalingBaseUrl;
+  final String httpBaseUrl;
+  final VtonLogLevel logLevel;
+}
+
+enum _CredentialKind { clientToken, developmentApiKey }

@@ -76,11 +76,11 @@ class VtonRemoteView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => VtonVideoView(
-        source: VtonVideoSource.remote,
-        fit: fit,
-        mirror: mirror,
-        gestureRecognizers: gestureRecognizers,
-      );
+    source: VtonVideoSource.remote,
+    fit: fit,
+    mirror: mirror,
+    gestureRecognizers: gestureRecognizers,
+  );
 }
 
 /// Renders the **raw camera** feed being published, before transformation.
@@ -112,11 +112,11 @@ class VtonLocalPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => VtonVideoView(
-        source: VtonVideoSource.local,
-        fit: fit,
-        mirror: mirror,
-        gestureRecognizers: gestureRecognizers,
-      );
+    source: VtonVideoSource.local,
+    fit: fit,
+    mirror: mirror,
+    gestureRecognizers: gestureRecognizers,
+  );
 }
 
 /// Shared platform-view host.
@@ -146,10 +146,10 @@ class VtonVideoView extends StatelessWidget {
   final Set<Factory<OneSequenceGestureRecognizer>> gestureRecognizers;
 
   Map<String, Object?> get _creationParams => <String, Object?>{
-        'source': source.name,
-        'fit': fit.name,
-        'mirror': mirror,
-      };
+    'source': source.name,
+    'fit': fit.name,
+    'mirror': mirror,
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -167,21 +167,21 @@ class VtonVideoView extends StatelessWidget {
         viewType: DecartVtonPlatform.videoViewType,
         surfaceFactory:
             (BuildContext context, PlatformViewController controller) {
-          return AndroidViewSurface(
-            controller: controller as AndroidViewController,
-            gestureRecognizers: gestureRecognizers,
-            hitTestBehavior: PlatformViewHitTestBehavior.opaque,
-          );
-        },
+              return AndroidViewSurface(
+                controller: controller as AndroidViewController,
+                gestureRecognizers: gestureRecognizers,
+                hitTestBehavior: PlatformViewHitTestBehavior.opaque,
+              );
+            },
         onCreatePlatformView: (PlatformViewCreationParams params) {
           return PlatformViewsService.initExpensiveAndroidView(
-            id: params.id,
-            viewType: DecartVtonPlatform.videoViewType,
-            layoutDirection: TextDirection.ltr,
-            creationParams: _creationParams,
-            creationParamsCodec: const StandardMessageCodec(),
-            onFocus: () => params.onFocusChanged(true),
-          )
+              id: params.id,
+              viewType: DecartVtonPlatform.videoViewType,
+              layoutDirection: TextDirection.ltr,
+              creationParams: _creationParams,
+              creationParamsCodec: const StandardMessageCodec(),
+              onFocus: () => params.onFocusChanged(true),
+            )
             ..addOnPlatformViewCreatedListener(params.onPlatformViewCreated)
             ..create();
         },
@@ -207,14 +207,14 @@ class _UnsupportedPlatform extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => const ColoredBox(
-        color: Color(0xFF000000),
-        child: Center(
-          child: Text(
-            'decart_vton_flutter supports Android and iOS only.',
-            textAlign: TextAlign.center,
-            textDirection: TextDirection.ltr,
-            style: TextStyle(color: Color(0xFFBBBBBB), fontSize: 12),
-          ),
-        ),
-      );
+    color: Color(0xFF000000),
+    child: Center(
+      child: Text(
+        'decart_vton_flutter supports Android and iOS only.',
+        textAlign: TextAlign.center,
+        textDirection: TextDirection.ltr,
+        style: TextStyle(color: Color(0xFFBBBBBB), fontSize: 12),
+      ),
+    ),
+  );
 }

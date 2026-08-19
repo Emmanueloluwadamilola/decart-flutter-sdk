@@ -29,9 +29,9 @@ Flutter plugin wrapping the native Decart realtime SDKs for virtual try-on.
 The iOS side requires Flutter's Swift Package Manager integration; see the
 comments at the top of this podspec.
                        DESC
-  s.homepage         = 'https://github.com/dextercyberlabs/decart_vton_flutter'
+  s.homepage         = 'https://github.com/Emmanueloluwadamilola/decart-flutter-sdk'
   s.license          = { :file => '../LICENSE' }
-  s.author           = { 'Dextercyberlabs' => 'devs@dextercyberlabs.com' }
+  s.author           = { 'Emmanuel Oluwadamilola' => 'https://github.com/Emmanueloluwadamilola' }
   s.source           = { :path => '.' }
 
   # No source_files: the Swift lives under decart_vton_flutter/Sources and is

@@ -47,13 +47,13 @@ final class VtonSessionController {
     func initialize(_ args: [String: Any]) async throws {
         await release()
 
-        guard let apiKey = ChannelCodec.string(args, "apiKey")?
+        guard let clientToken = ChannelCodec.string(args, "clientToken")?
             .trimmingCharacters(in: .whitespacesAndNewlines),
-            !apiKey.isEmpty
+            !clientToken.isEmpty
         else {
             throw VtonPluginError(
                 code: ErrorCodes.invalidApiKey,
-                message: "apiKey must be a non-empty string."
+                message: "clientToken must be a non-empty string."
             )
         }
 
@@ -69,7 +69,7 @@ final class VtonSessionController {
         }
 
         client = DecartClient(
-            decartConfiguration: DecartConfiguration(baseURL: baseURL, apiKey: apiKey)
+            decartConfiguration: DecartConfiguration(baseURL: baseURL, apiKey: clientToken)
         )
 
         // Two arguments are accepted on the channel and deliberately ignored

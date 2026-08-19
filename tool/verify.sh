@@ -53,8 +53,9 @@ step "flutter pub get"
 ok "packages resolved"
 
 step "dart format (check only)"
-( cd "$ROOT" && dart format --output=none --set-exit-if-changed lib test example/lib ) \
-  || die "formatting drift — run: dart format lib test example/lib"
+( cd "$ROOT" && dart format --output=none --set-exit-if-changed \
+    lib test example/lib example/integration_test example/test_driver ) \
+  || die "formatting drift — run: dart format lib test example/lib example/integration_test example/test_driver"
 ok "formatting clean"
 
 step "flutter analyze (package)"

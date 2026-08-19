@@ -28,15 +28,12 @@ class VtonOutfit {
   /// At least one of [prompt] (non-blank) or [referenceImage] must be provided;
   /// this is asserted in debug builds and re-validated before the value is sent
   /// to the platform.
-  const VtonOutfit({
-    this.prompt,
-    this.referenceImage,
-    this.enhance = true,
-  }) : assert(
-          prompt != null || referenceImage != null,
-          'A VtonOutfit needs at least a prompt or a reference image. '
-          'An outfit with neither would clear the entire try-on state.',
-        );
+  const VtonOutfit({this.prompt, this.referenceImage, this.enhance = true})
+    : assert(
+        prompt != null || referenceImage != null,
+        'A VtonOutfit needs at least a prompt or a reference image. '
+        'An outfit with neither would clear the entire try-on state.',
+      );
 
   /// Text description of the garment change.
   ///
@@ -95,8 +92,9 @@ class VtonOutfit {
     );
     return VtonOutfit(
       prompt: clearPrompt ? null : (prompt ?? this.prompt),
-      referenceImage:
-          clearReferenceImage ? null : (referenceImage ?? this.referenceImage),
+      referenceImage: clearReferenceImage
+          ? null
+          : (referenceImage ?? this.referenceImage),
       enhance: enhance ?? this.enhance,
     );
   }
@@ -114,7 +112,8 @@ class VtonOutfit {
   int get hashCode => Object.hash(prompt, enhance, referenceImage?.length);
 
   @override
-  String toString() => 'VtonOutfit(prompt: ${prompt ?? '<none>'}, '
+  String toString() =>
+      'VtonOutfit(prompt: ${prompt ?? '<none>'}, '
       'referenceImage: ${hasReferenceImage ? '${referenceImage!.length} bytes' : '<none>'}, '
       'enhance: $enhance)';
 

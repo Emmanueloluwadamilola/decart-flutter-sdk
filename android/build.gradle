@@ -7,24 +7,22 @@ version = '0.1.0'
 // Flutter plugin's Gradle build is a subproject of the app's build and hard
 // pins here turn into version conflicts there.
 //
-//   decartAndroidSdkVersion=0.7.9     # the Decart SDK release to bind against
-//   decartAgpVersion=8.7.3            # match your app's AGP
-//   decartKotlinVersion=2.1.0         # match your app's Kotlin (must be >= 2.1)
+//   decartAndroidSdkVersion=0.7.10    # the Decart SDK release to bind against
+//   decartAgpVersion=9.0.1            # match your app's AGP
+//   decartKotlinVersion=2.3.20        # Kotlin DSL/compiler API version
 //   decartCompileSdk=36               # match your app's compileSdk
 //
-// The AGP and Kotlin defaults target the Flutter 3.24–3.32 generation. Newer
-// Flutter templates ship AGP 9.x and Kotlin 2.3.x; if your app uses those, set
-// the two properties above to match, or Gradle will report the Android/Kotlin
-// plugin appearing on the buildscript classpath with two different versions.
-def decartAndroidSdkVersion = project.findProperty('decartAndroidSdkVersion') ?: '0.7.9'
-def decartAgpVersion = project.findProperty('decartAgpVersion') ?: '8.7.3'
-def decartKotlinVersion = project.findProperty('decartKotlinVersion') ?: '2.1.0'
+// These defaults match Flutter 3.44. Apps may override them to match a newer
+// compatible toolchain.
+def decartAndroidSdkVersion = project.findProperty('decartAndroidSdkVersion') ?: '0.7.10'
+def decartAgpVersion = project.findProperty('decartAgpVersion') ?: '9.0.1'
+def decartKotlinVersion = project.findProperty('decartKotlinVersion') ?: '2.3.20'
 def decartCompileSdk = (project.findProperty('decartCompileSdk') ?: '36') as Integer
 
 buildscript {
     // Re-read here: the buildscript block is evaluated before the script body.
-    def agp = project.findProperty('decartAgpVersion') ?: '8.7.3'
-    def kotlin = project.findProperty('decartKotlinVersion') ?: '2.1.0'
+    def agp = project.findProperty('decartAgpVersion') ?: '9.0.1'
+    def kotlin = project.findProperty('decartKotlinVersion') ?: '2.3.20'
     repositories {
         google()
         mavenCentral()
@@ -36,7 +34,9 @@ buildscript {
 }
 
 apply plugin: 'com.android.library'
-apply plugin: 'org.jetbrains.kotlin.android'
+// AGP 9 compiles Kotlin through its built-in Kotlin support. Applying the
+// legacy Kotlin Android plugin here makes future Flutter releases reject this
+// plugin, so deliberately apply only the Android library plugin.
 
 repositories {
     google()
@@ -99,7 +99,13 @@ kotlin {
 }
 
 dependencies {
-    implementation "com.github.DecartAI:decart-android:$decartAndroidSdkVersion"
+    implementation("com.github.DecartAI:decart-android:$decartAndroidSdkVersion") {
+        // Decart's active realtime implementation uses LiveKit's shaded
+        // livekit.org.webrtc classes. The additional unshaded engine is only
+        // referenced by an unused legacy helper in the upstream AAR and adds
+        // ~11 MB per ABI to every app.
+        exclude group: 'io.github.webrtc-sdk', module: 'android'
+    }
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
     // livekit-android and the webrtc artifact arrive transitively at `api`
     // scope from the Decart SDK, so the renderer types used by

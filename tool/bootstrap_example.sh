@@ -9,7 +9,7 @@
 # Gradle wrappers, an Xcode `.pbxproj`, launch storyboards. Those are machine
 # artefacts, not source, and hand-writing an Xcode project file is not a
 # reasonable thing to do. So the repository ships the parts that *are* source
-# (Dart, the plugin's own native code, pubspec, .env.example) and this script
+# (Dart, the plugin's own native code, pubspec, env.example) and this script
 # generates the rest, then patches it.
 #
 # Safe to re-run: it regenerates into a temp directory and only copies folders
@@ -272,18 +272,12 @@ for note in manual:
     print(f"    NOTE: {note}", file=sys.stderr)
 PYTHON
 
-# ── 4. .env ─────────────────────────────────────────────────────────────────
-if [[ ! -f "$EXAMPLE/.env" ]]; then
-  cp "$EXAMPLE/.env.example" "$EXAMPLE/.env"
-  warn "Created example/.env from the template — it has NO key in it yet."
-  warn "Add DECART_API_KEY=... to $EXAMPLE/.env before running the app."
-fi
-
-# ── 5. Dependencies ─────────────────────────────────────────────────────────
+# ── 4. Dependencies ─────────────────────────────────────────────────────────
 log "Resolving packages…"
 ( cd "$ROOT" && flutter pub get </dev/null )
 ( cd "$EXAMPLE" && flutter pub get </dev/null )
 
 log "Done. Next:"
 echo "    tool/verify.sh                 # analyze + test + build both platforms"
-echo "    cd example && flutter run      # on a physical device"
+echo "    cp -n example/env.example example/.env"
+echo "    tool/run_example.sh            # loads example/.env automatically"

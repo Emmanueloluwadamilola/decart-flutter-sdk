@@ -34,12 +34,12 @@ let package = Package(
         // for a Flutter plugin.
         .package(name: "FlutterFramework", path: "../FlutterFramework"),
 
-        // Pinned to the release this plugin's Swift was written against.
+        // Pinned to the release this plugin's Swift is tested against.
         // 0.6.x is pre-1.0, so `upToNextMinor` rather than `from` — a 0.7.0
         // may break the API surface used here.
         .package(
             url: "https://github.com/DecartAI/decart-ios.git",
-            .upToNextMinor(from: "0.6.9")
+            exact: "0.6.10"
         ),
         // Declared explicitly even though DecartSDK already depends on it:
         // `VtonVideoPlatformView` imports LiveKit directly for `VideoView`, and

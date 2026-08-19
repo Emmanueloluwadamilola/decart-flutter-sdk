@@ -1,6 +1,12 @@
+import 'dart:async';
+
 import 'package:decart_vton_flutter/decart_vton_flutter.dart';
+import 'package:decart_vton_flutter/src/decart_vton_platform.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+Uint8List _jpegBytes([List<int> payload = const <int>[]]) =>
+    Uint8List.fromList(<int>[0xff, 0xd8, 0xff, ...payload]);
 
 /// Records every method-channel call and replies with whatever the test set up.
 class _FakeHost {
@@ -15,11 +21,12 @@ class _FakeHost {
   void install() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(methodChannel, (MethodCall call) async {
-      calls.add(call);
-      final reply = replies[call.method];
-      if (reply is PlatformException) throw reply;
-      return reply;
-    });
+          calls.add(call);
+          final reply = replies[call.method];
+          if (reply is PlatformException) throw reply;
+          if (reply is Future<Object?>) return reply;
+          return reply;
+        });
   }
 
   void uninstall() {
@@ -66,10 +73,12 @@ void main() {
     VtonModel model = VtonModel.lucyVtonLatest,
     VtonOutfit? initialOutfit,
   }) async {
-    await vton.initialize(apiKey: 'dct_test');
+    await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
     await vton.connect(model: model, initialOutfit: initialOutfit);
-    await emit(
-        <String, Object?>{'type': 'connectionState', 'state': 'generating'});
+    await emit(<String, Object?>{
+      'type': 'connectionState',
+      'state': 'generating',
+    });
   }
 
   setUp(() {
@@ -91,7 +100,9 @@ void main() {
     );
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockStreamHandler(
-            const EventChannel(eventChannelName), streamHandler);
+          const EventChannel(eventChannelName),
+          streamHandler,
+        );
 
     vton = DecartVton.forTesting(platform);
   });
@@ -107,27 +118,33 @@ void main() {
   // ───────────────────────────────────────────────────────────── initialize ──
 
   group('initialize', () {
-    test('rejects a blank key without touching the platform', () async {
-      await expectLater(
-        vton.initialize(apiKey: '   '),
-        throwsA(
-          isA<DecartVtonException>().having((DecartVtonException e) => e.code,
-              'code', VtonErrorCode.invalidApiKey),
-        ),
-      );
-      expect(host.wasCalled('initialize'), isFalse);
-    });
+    test(
+      'rejects a blank client token without touching the platform',
+      () async {
+        await expectLater(
+          vton.initialize(clientTokenProvider: () async => '   '),
+          throwsA(
+            isA<DecartVtonException>().having(
+              (DecartVtonException e) => e.code,
+              'code',
+              VtonErrorCode.invalidApiKey,
+            ),
+          ),
+        );
+        expect(host.wasCalled('initialize'), isFalse);
+      },
+    );
 
     test('forwards trimmed configuration to the platform', () async {
       await vton.initialize(
-        apiKey: '  dct_abc  ',
+        clientTokenProvider: () async => '  ek_short-lived-token  ',
         signalingBaseUrl: 'wss://example.test',
         httpBaseUrl: 'https://example.test',
         logLevel: VtonLogLevel.debug,
       );
 
       final args = host.argsOf('initialize');
-      expect(args['apiKey'], 'dct_abc');
+      expect(args['clientToken'], 'ek_short-lived-token');
       expect(args['signalingBaseUrl'], 'wss://example.test');
       expect(args['httpBaseUrl'], 'https://example.test');
       expect(args['logLevel'], 'debug');
@@ -135,14 +152,17 @@ void main() {
     });
 
     test('is idempotent unless forced', () async {
-      await vton.initialize(apiKey: 'dct_a');
-      await vton.initialize(apiKey: 'dct_a');
+      await vton.initialize(clientTokenProvider: () async => 'ek_token-a');
+      await vton.initialize(clientTokenProvider: () async => 'ek_token-a');
       expect(
         host.calls.where((MethodCall c) => c.method == 'initialize').length,
         1,
       );
 
-      await vton.initialize(apiKey: 'dct_b', force: true);
+      await vton.initialize(
+        clientTokenProvider: () async => 'ek_token-b',
+        force: true,
+      );
       expect(host.wasCalled('release'), isTrue);
       expect(
         host.calls.where((MethodCall c) => c.method == 'initialize').length,
@@ -156,15 +176,74 @@ void main() {
         message: 'rejected by server',
       );
       await expectLater(
-        vton.initialize(apiKey: 'dct_bad'),
+        vton.initialize(clientTokenProvider: () async => 'ek_bad-token'),
         throwsA(
           isA<DecartVtonException>()
-              .having((DecartVtonException e) => e.code, 'code',
-                  VtonErrorCode.invalidApiKey)
-              .having((DecartVtonException e) => e.nativeCode, 'nativeCode',
-                  'INVALID_API_KEY'),
+              .having(
+                (DecartVtonException e) => e.code,
+                'code',
+                VtonErrorCode.invalidApiKey,
+              )
+              .having(
+                (DecartVtonException e) => e.nativeCode,
+                'nativeCode',
+                'INVALID_API_KEY',
+              ),
         ),
       );
+      expect(vton.isInitialized, isFalse);
+    });
+
+    test('rejects permanent credentials', () async {
+      await expectLater(
+        vton.initialize(clientTokenProvider: () async => 'dct_not_allowed'),
+        throwsA(
+          isA<DecartVtonException>().having(
+            (DecartVtonException e) => e.code,
+            'code',
+            VtonErrorCode.invalidApiKey,
+          ),
+        ),
+      );
+      expect(host.wasCalled('initialize'), isFalse);
+    });
+
+    test('rejects values that are not Decart client tokens', () async {
+      await expectLater(
+        vton.initialize(clientTokenProvider: () async => 'arbitrary-token'),
+        throwsA(
+          isA<DecartVtonException>().having(
+            (DecartVtonException e) => e.code,
+            'code',
+            VtonErrorCode.invalidApiKey,
+          ),
+        ),
+      );
+      expect(host.wasCalled('initialize'), isFalse);
+    });
+
+    test(
+      'development initializer accepts a trimmed dct key in debug',
+      () async {
+        await vton.initializeForDevelopment(apiKey: '  dct_test_prototype  ');
+
+        expect(host.argsOf('initialize')['clientToken'], 'dct_test_prototype');
+        expect(vton.isInitialized, isTrue);
+      },
+    );
+
+    test('development initializer rejects client tokens', () async {
+      await expectLater(
+        vton.initializeForDevelopment(apiKey: 'ek_wrong_mode'),
+        throwsA(
+          isA<DecartVtonException>().having(
+            (DecartVtonException e) => e.code,
+            'code',
+            VtonErrorCode.invalidApiKey,
+          ),
+        ),
+      );
+      expect(host.wasCalled('initialize'), isFalse);
     });
   });
 
@@ -175,14 +254,17 @@ void main() {
       await expectLater(
         vton.connect(model: VtonModel.lucyVtonLatest),
         throwsA(
-          isA<DecartVtonException>().having((DecartVtonException e) => e.code,
-              'code', VtonErrorCode.notInitialized),
+          isA<DecartVtonException>().having(
+            (DecartVtonException e) => e.code,
+            'code',
+            VtonErrorCode.notInitialized,
+          ),
         ),
       );
     });
 
     test('sends the model geometry and defaults the video config', () async {
-      await vton.initialize(apiKey: 'dct_a');
+      await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
       await vton.connect(model: VtonModel.lucyVton3);
 
       final args = host.argsOf('connect');
@@ -201,9 +283,38 @@ void main() {
       expect(video['maxBitrate'], 2500000);
     });
 
+    test('latest VTON uses the native 1280x720 geometry', () async {
+      await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
+      await vton.connect(model: VtonModel.lucyVtonLatest);
+
+      final args = host.argsOf('connect');
+      expect(args['width'], 1280);
+      expect(args['height'], 720);
+      expect(VtonModel.lucyVton35.width, 1280);
+      expect(VtonModel.lucyVton35.height, 720);
+    });
+
+    test('rejects 1080p for VTON 3.5 before touching the session', () async {
+      await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
+      await expectLater(
+        vton.connect(
+          model: VtonModel.lucyVtonLatest,
+          resolution: VtonResolution.p1080,
+        ),
+        throwsA(
+          isA<DecartVtonException>().having(
+            (DecartVtonException e) => e.code,
+            'code',
+            VtonErrorCode.invalidInput,
+          ),
+        ),
+      );
+      expect(host.wasCalled('connect'), isFalse);
+    });
+
     test('bundles the initial outfit into the handshake', () async {
-      await vton.initialize(apiKey: 'dct_a');
-      final garment = Uint8List.fromList(<int>[1, 2, 3, 4]);
+      await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
+      final garment = _jpegBytes(<int>[1, 2, 3, 4]);
       await vton.connect(
         model: VtonModel.lucyVtonLatest,
         initialOutfit: VtonOutfit(
@@ -221,7 +332,7 @@ void main() {
     });
 
     test('rejects a reference image on a model that cannot use one', () async {
-      await vton.initialize(apiKey: 'dct_a');
+      await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
       await expectLater(
         vton.connect(
           model: VtonModel.lucyRestyle2,
@@ -231,8 +342,11 @@ void main() {
           ),
         ),
         throwsA(
-          isA<DecartVtonException>().having((DecartVtonException e) => e.code,
-              'code', VtonErrorCode.invalidInput),
+          isA<DecartVtonException>().having(
+            (DecartVtonException e) => e.code,
+            'code',
+            VtonErrorCode.invalidInput,
+          ),
         ),
       );
       expect(host.wasCalled('connect'), isFalse);
@@ -243,12 +357,15 @@ void main() {
         code: 'PERMISSION_DENIED',
         message: 'CAMERA not granted',
       );
-      await vton.initialize(apiKey: 'dct_a');
+      await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
       await expectLater(
         vton.connect(model: VtonModel.lucyVtonLatest),
         throwsA(
-          isA<DecartVtonException>().having((DecartVtonException e) => e.code,
-              'code', VtonErrorCode.permissionDenied),
+          isA<DecartVtonException>().having(
+            (DecartVtonException e) => e.code,
+            'code',
+            VtonErrorCode.permissionDenied,
+          ),
         ),
       );
     });
@@ -279,47 +396,87 @@ void main() {
       );
     });
 
-    test('rejects an image on a model without reference-image support',
-        () async {
-      await connectAndGoLive(model: VtonModel.lucyRestyleLatest);
-      await expectLater(
-        vton.setOutfit(referenceImage: Uint8List.fromList(<int>[1])),
-        throwsA(
-          isA<DecartVtonException>().having((DecartVtonException e) => e.code,
-              'code', VtonErrorCode.invalidInput),
-        ),
-      );
-    });
+    test(
+      'rejects an image on a model without reference-image support',
+      () async {
+        await connectAndGoLive(model: VtonModel.lucyRestyleLatest);
+        await expectLater(
+          vton.setOutfit(referenceImage: Uint8List.fromList(<int>[1])),
+          throwsA(
+            isA<DecartVtonException>().having(
+              (DecartVtonException e) => e.code,
+              'code',
+              VtonErrorCode.invalidInput,
+            ),
+          ),
+        );
+      },
+    );
 
     test('rejects an update when no session is live', () async {
-      await vton.initialize(apiKey: 'dct_a');
+      await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
       await vton.connect(model: VtonModel.lucyVtonLatest);
       // No connectionState event emitted, so the state is still idle.
       await expectLater(
         vton.setOutfit(prompt: 'a red parka'),
         throwsA(
-          isA<DecartVtonException>().having((DecartVtonException e) => e.code,
-              'code', VtonErrorCode.notConnected),
+          isA<DecartVtonException>().having(
+            (DecartVtonException e) => e.code,
+            'code',
+            VtonErrorCode.notConnected,
+          ),
         ),
       );
+    });
+
+    test(
+      'rejects unsupported image bytes before the platform channel',
+      () async {
+        await connectAndGoLive();
+        await expectLater(
+          vton.setOutfit(referenceImage: Uint8List.fromList(<int>[1, 2, 3])),
+          throwsA(isA<DecartVtonException>()),
+        );
+        expect(host.wasCalled('setOutfit'), isFalse);
+      },
+    );
+
+    test('rejects reference images larger than 5 MB', () async {
+      await connectAndGoLive();
+      final oversized = Uint8List(5 * 1024 * 1024 + 1)
+        ..setRange(0, 3, const <int>[0xff, 0xd8, 0xff]);
+
+      await expectLater(
+        vton.setOutfit(referenceImage: oversized),
+        throwsA(
+          isA<DecartVtonException>().having(
+            (DecartVtonException error) => error.code,
+            'code',
+            VtonErrorCode.invalidInput,
+          ),
+        ),
+      );
+      expect(host.wasCalled('setOutfit'), isFalse);
     });
   });
 
   group('setOutfit success paths', () {
-    test('prompt only sends a null image (clearing any previous one)',
-        () async {
-      await connectAndGoLive();
-      await vton.setOutfit(prompt: '  Substitute the top with a parka  ');
+    test(
+      'prompt only sends a null image (clearing any previous one)',
+      () async {
+        await connectAndGoLive();
+        await vton.setOutfit(prompt: '  Substitute the top with a parka  ');
 
-      final args = host.argsOf('setOutfit');
-      expect(args['prompt'], 'Substitute the top with a parka');
-      expect(args['referenceImage'], isNull);
-      expect(args['enhance'], isTrue);
-    });
+        final args = host.argsOf('setOutfit');
+        expect(args['prompt'], 'Substitute the top with a parka');
+        expect(args['referenceImage'], isNull);
+        expect(args['enhance'], isTrue);
+      },
+    );
 
     test('image only sends a null prompt', () async {
       await connectAndGoLive();
-      final garment = Uint8List.fromList(<int>[7, 7, 7]);
+      final garment = _jpegBytes(<int>[7, 7, 7]);
       await vton.setOutfit(referenceImage: garment);
 
       final args = host.argsOf('setOutfit');
@@ -329,7 +486,7 @@ void main() {
 
     test('prompt and image together send both', () async {
       await connectAndGoLive();
-      final garment = Uint8List.fromList(<int>[5]);
+      final garment = _jpegBytes(<int>[5]);
       await vton.setOutfit(
         prompt: 'in charcoal',
         referenceImage: garment,
@@ -343,7 +500,7 @@ void main() {
     });
 
     test('copyWith preserves the image while changing the prompt', () async {
-      final garment = Uint8List.fromList(<int>[1, 2]);
+      final garment = _jpegBytes(<int>[1, 2]);
       await connectAndGoLive(
         initialOutfit: VtonOutfit(prompt: 'a parka', referenceImage: garment),
       );
@@ -373,8 +530,11 @@ void main() {
       await expectLater(
         vton.setOutfit(prompt: 'something the server hates'),
         throwsA(
-          isA<DecartVtonException>().having((DecartVtonException e) => e.code,
-              'code', VtonErrorCode.promptRejected),
+          isA<DecartVtonException>().having(
+            (DecartVtonException e) => e.code,
+            'code',
+            VtonErrorCode.promptRejected,
+          ),
         ),
       );
       expect(vton.currentOutfit?.prompt, 'the original parka');
@@ -385,14 +545,18 @@ void main() {
 
   group('event decoding', () {
     test('connection states reach both the stream and the getter', () async {
-      await vton.initialize(apiKey: 'dct_a');
+      await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
       final seen = <VtonConnectionState>[];
       final sub = vton.connectionStates.listen(seen.add);
 
-      await emit(
-          <String, Object?>{'type': 'connectionState', 'state': 'connecting'});
-      await emit(
-          <String, Object?>{'type': 'connectionState', 'state': 'generating'});
+      await emit(<String, Object?>{
+        'type': 'connectionState',
+        'state': 'connecting',
+      });
+      await emit(<String, Object?>{
+        'type': 'connectionState',
+        'state': 'generating',
+      });
 
       expect(seen, <VtonConnectionState>[
         VtonConnectionState.connecting,
@@ -404,7 +568,7 @@ void main() {
     });
 
     test('sessionStarted updates sessionId', () async {
-      await vton.initialize(apiKey: 'dct_a');
+      await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
       await emit(<String, Object?>{
         'type': 'sessionStarted',
         'sessionId': 'sess-abc',
@@ -414,7 +578,7 @@ void main() {
     });
 
     test('generation ticks decode to a Duration', () async {
-      await vton.initialize(apiKey: 'dct_a');
+      await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
       final events = <VtonEvent>[];
       final sub = vton.events.listen(events.add);
 
@@ -429,7 +593,7 @@ void main() {
     });
 
     test('native errors land on the errors stream, typed', () async {
-      await vton.initialize(apiKey: 'dct_a');
+      await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
       final errors = <DecartVtonException>[];
       final sub = vton.errors.listen(errors.add);
 
@@ -445,7 +609,7 @@ void main() {
     });
 
     test('connection-quality samples decode', () async {
-      await vton.initialize(apiKey: 'dct_a');
+      await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
       final events = <VtonEvent>[];
       final sub = vton.events.listen(events.add);
 
@@ -465,7 +629,7 @@ void main() {
     });
 
     test('unknown event types are ignored rather than thrown on', () async {
-      await vton.initialize(apiKey: 'dct_a');
+      await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
       final events = <VtonEvent>[];
       final sub = vton.events.listen(events.add);
 
@@ -482,19 +646,31 @@ void main() {
     test('covers both platforms\' vocabularies', () {
       // Android spellings.
       expect(
-          VtonErrorCode.fromNative('WEBRTC_ICE_ERROR'), VtonErrorCode.webrtc);
-      expect(VtonErrorCode.fromNative('WEBRTC_WEBSOCKET_ERROR'),
-          VtonErrorCode.websocket);
-      expect(VtonErrorCode.fromNative('WEBRTC_TIMEOUT_ERROR'),
-          VtonErrorCode.connectionTimeout);
+        VtonErrorCode.fromNative('WEBRTC_ICE_ERROR'),
+        VtonErrorCode.webrtc,
+      );
+      expect(
+        VtonErrorCode.fromNative('WEBRTC_WEBSOCKET_ERROR'),
+        VtonErrorCode.websocket,
+      );
+      expect(
+        VtonErrorCode.fromNative('WEBRTC_TIMEOUT_ERROR'),
+        VtonErrorCode.connectionTimeout,
+      );
       // iOS spellings.
       expect(VtonErrorCode.fromNative('WEB_RTC_ERROR'), VtonErrorCode.webrtc);
       expect(
-          VtonErrorCode.fromNative('WEBSOCKET_ERROR'), VtonErrorCode.websocket);
-      expect(VtonErrorCode.fromNative('CONNECTION_TIMEOUT'),
-          VtonErrorCode.connectionTimeout);
-      expect(VtonErrorCode.fromNative('MODEL_NOT_FOUND'),
-          VtonErrorCode.modelNotFound);
+        VtonErrorCode.fromNative('WEBSOCKET_ERROR'),
+        VtonErrorCode.websocket,
+      );
+      expect(
+        VtonErrorCode.fromNative('CONNECTION_TIMEOUT'),
+        VtonErrorCode.connectionTimeout,
+      );
+      expect(
+        VtonErrorCode.fromNative('MODEL_NOT_FOUND'),
+        VtonErrorCode.modelNotFound,
+      );
       // Unknown.
       expect(VtonErrorCode.fromNative('SOMETHING_ELSE'), VtonErrorCode.unknown);
       expect(VtonErrorCode.fromNative(null), VtonErrorCode.unknown);
@@ -510,12 +686,14 @@ void main() {
     });
 
     test('dispose releases the platform and closes the streams', () async {
-      await vton.initialize(apiKey: 'dct_a');
+      await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
       await vton.dispose();
 
       expect(host.wasCalled('release'), isTrue);
-      expect(() => vton.connect(model: VtonModel.lucyVtonLatest),
-          throwsA(isA<StateError>()));
+      expect(
+        () => vton.connect(model: VtonModel.lucyVtonLatest),
+        throwsA(isA<StateError>()),
+      );
     });
 
     test('checkConnectivity decodes the report', () async {
@@ -524,7 +702,7 @@ void main() {
         'transport': 'udp',
         'roundTripMs': 42,
       };
-      await vton.initialize(apiKey: 'dct_a');
+      await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
       final report = await vton.checkConnectivity();
 
       expect(report.quality, VtonConnectionQuality.good);
@@ -532,6 +710,43 @@ void main() {
       expect(report.roundTripMs, 42);
       expect(report.isUsable, isTrue);
     });
+
+    test('serializes connect and disconnect operations', () async {
+      await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
+      final pendingConnect = Completer<Object?>();
+      host.replies['connect'] = pendingConnect.future;
+
+      final connect = vton.connect(model: VtonModel.lucyVtonLatest);
+      final disconnect = vton.disconnect();
+      await pumpEventQueue();
+      expect(host.wasCalled('connect'), isTrue);
+      expect(host.wasCalled('disconnect'), isFalse);
+
+      pendingConnect.complete(<Object?, Object?>{'sessionId': 'serialized'});
+      await connect;
+      await disconnect;
+      expect(host.wasCalled('disconnect'), isTrue);
+    });
+
+    test(
+      'resume does not trust a stale connected event after disconnect',
+      () async {
+        await connectAndGoLive();
+        await vton.disconnect();
+
+        // The mocked native side deliberately emits no disconnected event, so
+        // the synchronous state is still generating here.
+        expect(vton.connectionState, VtonConnectionState.generating);
+        await vton.resumeLastSession();
+
+        expect(
+          host.calls
+              .where((MethodCall call) => call.method == 'connect')
+              .length,
+          2,
+        );
+      },
+    );
   });
 
   // ──────────────────────────────────────────────────────────── value class ──

@@ -5,7 +5,7 @@
 ///
 /// ```dart
 /// final vton = DecartVton();
-/// await vton.initialize(apiKey: myKey);
+/// await vton.initialize(clientTokenProvider: fetchClientToken);
 /// await vton.connect(model: VtonModel.lucyVtonLatest);
 /// await vton.setOutfit(prompt: 'Substitute the current top with a red parka');
 /// ```
@@ -13,8 +13,7 @@
 /// …and render the result with [VtonRemoteView].
 library;
 
-export 'src/decart_vton.dart' show DecartVton;
-export 'src/decart_vton_platform.dart' show DecartVtonPlatform;
+export 'src/decart_vton.dart' show DecartVton, VtonClientTokenProvider;
 export 'src/models/vton_connection_state.dart'
     show VtonConnectionQuality, VtonConnectionState, VtonConnectivityReport;
 export 'src/models/vton_error.dart' show DecartVtonException, VtonErrorCode;

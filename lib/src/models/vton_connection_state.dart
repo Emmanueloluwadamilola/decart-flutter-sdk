@@ -134,6 +134,7 @@ class VtonConnectivityReport {
       transport != 'failed' && quality != VtonConnectionQuality.unusable;
 
   @override
-  String toString() => 'VtonConnectivityReport(quality: ${quality.name}, '
+  String toString() =>
+      'VtonConnectivityReport(quality: ${quality.name}, '
       'transport: $transport, roundTripMs: $roundTripMs)';
 }

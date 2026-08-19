@@ -2,7 +2,7 @@
 ///
 /// Values, dimensions and frame rates are taken verbatim from the native SDKs'
 /// model registries (`RealtimeModels.kt` on Android, `Models.swift` on iOS) at
-/// `decart-android` 0.7.9 / `decart-ios` v0.6.9.
+/// `decart-android` 0.7.10 / `decart-ios` v0.6.10.
 ///
 /// For virtual try-on you want one of the `lucyVton*` entries. The other
 /// realtime models are included because the underlying SDKs accept them on the
@@ -13,7 +13,10 @@ enum VtonModel {
   /// Virtual try-on, always the newest VTON revision (resolved server-side).
   ///
   /// This is the recommended default.
-  lucyVtonLatest._('lucy-vton-latest', 1088, 624, 30, true),
+  lucyVtonLatest._('lucy-vton-latest', 1280, 720, 30, true),
+
+  /// Virtual try-on, pinned to revision 3.5 at 720p.
+  lucyVton35._('lucy-vton-3.5', 1280, 720, 30, true),
 
   /// Virtual try-on, pinned to revision 3.
   lucyVton3._('lucy-vton-3', 1088, 624, 30, true),
@@ -82,7 +85,8 @@ enum VtonModel {
 
 /// Output resolution requested from the realtime server.
 ///
-/// When left unset the server default (720p) applies.
+/// Always choose a resolution supported by the selected model. VTON 3.5 and
+/// `lucy-vton-latest` currently support only 720p.
 enum VtonResolution {
   /// 720p output.
   p720('720p'),
@@ -130,7 +134,7 @@ enum VtonMirrorMode {
 /// Verbosity of the native SDK's own logging.
 ///
 /// **Android only.** The Decart iOS SDK has no runtime log-level control at
-/// v0.6.9 — it prints errors unconditionally and everything else only when the
+/// v0.6.10 — it prints errors unconditionally and everything else only when the
 /// `ENABLE_DECART_SDK_DUBUG_LOGS=YES` environment variable is set in the Xcode
 /// scheme. This value is silently ignored on iOS rather than pretending to work.
 ///
@@ -183,14 +187,15 @@ class VtonVideoConfig {
 
   /// Serialises to the platform-channel representation.
   Map<String, Object?> toMap() => <String, Object?>{
-        'maxBitrate': maxBitrate,
-        'maxFramerate': maxFramerate,
-        'preferredCodec': preferredCodec,
-        'simulcast': simulcast,
-      };
+    'maxBitrate': maxBitrate,
+    'maxFramerate': maxFramerate,
+    'preferredCodec': preferredCodec,
+    'simulcast': simulcast,
+  };
 
   @override
-  String toString() => 'VtonVideoConfig(maxBitrate: $maxBitrate, '
+  String toString() =>
+      'VtonVideoConfig(maxBitrate: $maxBitrate, '
       'maxFramerate: $maxFramerate, preferredCodec: $preferredCodec, '
       'simulcast: $simulcast)';
 }

@@ -24,8 +24,8 @@ class DecartVtonPlatform {
   DecartVtonPlatform({
     String methodChannelName = methodChannelDefaultName,
     String eventChannelName = eventChannelDefaultName,
-  })  : _methods = MethodChannel(methodChannelName),
-        _events = EventChannel(eventChannelName);
+  }) : _methods = MethodChannel(methodChannelName),
+       _events = EventChannel(eventChannelName);
 
   /// Default name of the method channel.
   static const String methodChannelDefaultName = 'ai.decart.vton/methods';
@@ -46,17 +46,16 @@ class DecartVtonPlatform {
 
   /// Creates the native client.
   Future<void> initialize({
-    required String apiKey,
+    required String clientToken,
     required String signalingBaseUrl,
     required String httpBaseUrl,
     required String logLevel,
-  }) =>
-      _invokeVoid('initialize', <String, Object?>{
-        'apiKey': apiKey,
-        'signalingBaseUrl': signalingBaseUrl,
-        'httpBaseUrl': httpBaseUrl,
-        'logLevel': logLevel,
-      });
+  }) => _invokeVoid('initialize', <String, Object?>{
+    'clientToken': clientToken,
+    'signalingBaseUrl': signalingBaseUrl,
+    'httpBaseUrl': httpBaseUrl,
+    'logLevel': logLevel,
+  });
 
   /// Opens a realtime session. Completes when the session is established.
   ///
@@ -79,8 +78,10 @@ class DecartVtonPlatform {
 
   /// Whether the native side currently has a live session.
   Future<bool> isConnected() async {
-    final result =
-        await _invoke<bool>('isConnected', const <String, Object?>{});
+    final result = await _invoke<bool>(
+      'isConnected',
+      const <String, Object?>{},
+    );
     return result ?? false;
   }
 

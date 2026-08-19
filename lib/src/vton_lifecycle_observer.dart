@@ -4,8 +4,6 @@ import 'package:flutter/widgets.dart';
 
 import 'decart_vton.dart';
 import 'models/vton_error.dart';
-import 'models/vton_model.dart';
-import 'models/vton_outfit.dart';
 
 /// Disconnects the try-on session when the app is backgrounded and reconnects
 /// it when the app returns to the foreground.
@@ -26,8 +24,6 @@ import 'models/vton_outfit.dart';
 ///   void initState() {
 ///     super.initState();
 ///     _observer = VtonLifecycleObserver(
-///       model: VtonModel.lucyVtonLatest,
-///       outfit: () => DecartVton().currentOutfit,
 ///       onError: (e) => debugPrint('reconnect failed: $e'),
 ///     )..attach();
 ///   }
@@ -43,41 +39,15 @@ import 'models/vton_outfit.dart';
 /// The observer only reconnects sessions **it** disconnected, so it will not
 /// resurrect a session the user deliberately ended.
 class VtonLifecycleObserver with WidgetsBindingObserver {
-  /// Creates an observer.
-  ///
-  /// [model] is the model to reconnect with. [outfit] is called at reconnect
-  /// time so the restored session comes back wearing whatever the user last
-  /// chose; returning `null` reconnects with no initial outfit.
-  VtonLifecycleObserver({
-    required this.model,
-    this.outfit,
-    this.onError,
-    this.camera = VtonCameraFacing.front,
-    this.mirror = VtonMirrorMode.auto,
-    this.resolution,
-    DecartVton? instance,
-  }) : _vton = instance ?? DecartVton();
-
-  /// Model to reconnect with.
-  final VtonModel model;
-
-  /// Supplies the outfit to restore on reconnect.
-  final VtonOutfit? Function()? outfit;
+  /// Creates an observer that restores the plugin's complete last session.
+  VtonLifecycleObserver({this.onError, DecartVton? instance})
+    : _vton = instance ?? DecartVton();
 
   /// Called when an automatic reconnect fails.
   ///
   /// Without this, a failed reconnect is silent — the user just sees a blank
   /// view. Wire it to whatever your app does with recoverable errors.
   final void Function(DecartVtonException error)? onError;
-
-  /// Camera to reconnect with.
-  final VtonCameraFacing camera;
-
-  /// Mirror mode to reconnect with.
-  final VtonMirrorMode mirror;
-
-  /// Resolution to reconnect with.
-  final VtonResolution? resolution;
 
   final DecartVton _vton;
 
@@ -135,17 +105,17 @@ class VtonLifecycleObserver with WidgetsBindingObserver {
     _inFlight = (_inFlight ?? Future<void>.value())
         .then((_) => action())
         .catchError((Object error, StackTrace stack) {
-      if (error is DecartVtonException) {
-        onError?.call(error);
-      } else {
-        onError?.call(
-          DecartVtonException(
-            VtonErrorCode.unknown,
-            'Lifecycle transition failed: $error',
-          ),
-        );
-      }
-    });
+          if (error is DecartVtonException) {
+            onError?.call(error);
+          } else {
+            onError?.call(
+              DecartVtonException(
+                VtonErrorCode.unknown,
+                'Lifecycle transition failed: $error',
+              ),
+            );
+          }
+        });
   }
 
   Future<void> _handleForeground() async {
@@ -153,13 +123,7 @@ class VtonLifecycleObserver with WidgetsBindingObserver {
     _weDisconnected = false;
     if (!_vton.isInitialized) return;
     try {
-      await _vton.connect(
-        model: model,
-        initialOutfit: outfit?.call(),
-        camera: camera,
-        mirror: mirror,
-        resolution: resolution,
-      );
+      await _vton.resumeLastSession();
     } on DecartVtonException catch (e) {
       onError?.call(e);
     }

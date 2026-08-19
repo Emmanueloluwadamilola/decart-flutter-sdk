@@ -1,23 +1,10 @@
 # Consumer ProGuard/R8 rules for decart_vton_flutter.
 #
-# The Decart SDK ships its own consumer-rules.pro with equivalent keeps. These
-# are duplicated here deliberately: the SDK is resolved through JitPack, and a
-# JitPack-built AAR does not always carry its consumer rules through intact. A
-# duplicate keep rule is free; a missing one produces a release-only crash deep
-# inside WebRTC that is miserable to diagnose.
-
-# Decart SDK — reflection over model/serializer classes.
--keep class ai.decart.sdk.** { *; }
-
-# WebRTC (both the plain and LiveKit-shaded package names) — JNI bound.
--keep class org.webrtc.** { *; }
+# The Decart and LiveKit AARs carry the JNI/reflection rules they require. Do
+# not duplicate broad namespace keeps here: doing so prevents R8 from removing
+# unused SDK code. The unshaded WebRTC dependency is intentionally excluded;
+# Decart's AAR still contains one unused legacy helper with those signatures.
 -dontwarn org.webrtc.**
--keep class livekit.org.webrtc.** { *; }
--dontwarn livekit.org.webrtc.**
-
-# LiveKit.
--keep class io.livekit.** { *; }
--dontwarn io.livekit.**
 
 # kotlinx.serialization — the signalling protocol is @Serializable.
 -keepattributes *Annotation*, InnerClasses
@@ -36,5 +23,5 @@
     kotlinx.serialization.KSerializer serializer(...);
 }
 
-# This plugin's own entry point, referenced by name from the Flutter embedding.
--keep class ai.decart.vton.flutter.DecartVtonPlugin { *; }
+# Flutter's generated plugin registrant directly references the entry point, so
+# it does not require an additional keep rule.

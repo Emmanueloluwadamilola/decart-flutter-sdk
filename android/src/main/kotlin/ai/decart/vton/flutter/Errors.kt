@@ -43,7 +43,7 @@ internal class VtonPluginException(
  * carrying human-readable messages ("Not connected", "Prompt send timed out",
  * "Failed to send image", "livekit_room_info timeout (…)"), so some of this is
  * necessarily message sniffing. Every branch below is derived from a literal
- * that exists in `decart-android` 0.7.9 — see the comments. When the SDK
+ * that exists in `decart-android` 0.7.10 — see the comments. When the SDK
  * changes those strings the worst case is a demotion to `UNKNOWN`, with the
  * original message still intact on the Dart side.
  */

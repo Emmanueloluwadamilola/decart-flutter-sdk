@@ -23,8 +23,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/DecartAI/decart-ios.git",
       "state" : {
-        "revision" : "21237b2d3e4f5b589af0cdb0bedb243936cf5c75",
-        "version" : "0.6.9"
+        "revision" : "89e5d3418a930644536f4488578d0efc0979ad3f",
+        "version" : "0.6.10"
       }
     },
     {

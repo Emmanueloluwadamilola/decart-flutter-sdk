@@ -18,8 +18,10 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Everything stateful about a Decart session on Android.
@@ -52,18 +54,18 @@ internal class VtonSessionController(
     fun initialize(args: Map<String, Any?>) {
         release()
 
-        val apiKey = args["apiKey"] as? String
-        if (apiKey.isNullOrBlank()) {
+        val clientToken = args["clientToken"] as? String
+        if (clientToken.isNullOrBlank()) {
             throw VtonPluginException(
                 ErrorCodes.INVALID_API_KEY,
-                "apiKey must be a non-empty string.",
+                "clientToken must be a non-empty string.",
             )
         }
 
         val created = DecartClient(
             context = context.applicationContext,
             config = DecartClientConfig(
-                apiKey = apiKey,
+                apiKey = clientToken,
                 baseUrl = args.stringOrNull("signalingBaseUrl") ?: "wss://api.decart.ai",
                 httpBaseUrl = args.stringOrNull("httpBaseUrl") ?: "https://api.decart.ai",
                 logLevel = logLevel(args.stringOrNull("logLevel")),
@@ -102,9 +104,7 @@ internal class VtonSessionController(
         supportsReferenceImage = args.bool("supportsReferenceImage", true)
 
         val prompt = args.stringOrNull("prompt")?.takeIf { it.isNotBlank() }
-        val imageBase64 = args.bytes("referenceImage")
-            ?.takeIf { it.isNotEmpty() }
-            ?.let { ImageUtils.byteArrayToBase64(it) }
+        val imageBase64 = encodeReferenceImage(args.bytes("referenceImage"))
         val enhance = args.bool("enhance", true)
 
         val stream = try {
@@ -203,7 +203,7 @@ internal class VtonSessionController(
             // image explicitly clears the previous one. This is the whole-state
             // replace the API documents.
             realtimeClient.setImage(
-                imageBase64 = imageBytes?.let { ImageUtils.byteArrayToBase64(it) },
+                imageBase64 = encodeReferenceImage(imageBytes),
                 prompt = prompt,
                 enhance = enhance,
                 timeout = timeoutMs,
@@ -214,6 +214,14 @@ internal class VtonSessionController(
                 enhance = enhance,
                 timeoutMs = timeoutMs,
             )
+        }
+    }
+
+    /** Base64 conversion is CPU-heavy and can copy several megabytes. */
+    private suspend fun encodeReferenceImage(bytes: ByteArray?): String? {
+        val image = bytes?.takeIf { it.isNotEmpty() } ?: return null
+        return withContext(Dispatchers.Default) {
+            ImageUtils.byteArrayToBase64(image)
         }
     }
 

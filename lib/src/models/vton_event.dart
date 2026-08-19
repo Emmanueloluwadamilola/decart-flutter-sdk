@@ -51,7 +51,7 @@ final class VtonSessionStarted extends VtonEvent {
   /// Token a *viewer* client could use to subscribe to the same room without
   /// seeing the publisher's API key.
   ///
-  /// Emitted on Android only; the iOS SDK does not surface it at v0.6.9.
+  /// Emitted on Android only; the iOS SDK does not surface it at v0.6.10.
   /// Building a viewer experience on top of it is outside this plugin's scope.
   final String? subscribeToken;
 
@@ -121,7 +121,8 @@ final class VtonConnectionQualityChanged extends VtonEvent {
   final int? jitterMs;
 
   @override
-  String toString() => 'VtonConnectionQualityChanged(${quality.name}, '
+  String toString() =>
+      'VtonConnectionQualityChanged(${quality.name}, '
       'rtt: $roundTripMs, loss: $packetLoss, jitter: $jitterMs)';
 }
 
