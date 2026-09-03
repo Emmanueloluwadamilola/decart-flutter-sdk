@@ -99,10 +99,11 @@ final class VtonSessionController {
         model = modelDefinition
         cameraPosition = ChannelCodec.position(ChannelCodec.string(args, "facing"))
         let mirror = ChannelCodec.mirror(ChannelCodec.string(args, "mirror"))
+        let referenceImage = try loadReferenceImage(args)
 
         let initialPrompt = DecartPrompt(
             text: ChannelCodec.string(args, "prompt") ?? "",
-            referenceImageData: ChannelCodec.bytes(args, "referenceImage"),
+            referenceImageData: referenceImage,
             enrich: ChannelCodec.bool(args, "enhance", true)
         )
 
@@ -164,20 +165,24 @@ final class VtonSessionController {
         }
 
         let prompt = ChannelCodec.string(args, "prompt")
-        let image = ChannelCodec.bytes(args, "referenceImage")
+        let imagePath = ChannelCodec.string(args, "referenceImagePath")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasImage = ChannelCodec.bytes(args, "referenceImage") != nil
+            || imagePath?.isEmpty == false
 
-        guard prompt != nil || image != nil else {
+        guard prompt != nil || hasImage else {
             throw VtonPluginError(
                 code: ErrorCodes.invalidInput,
                 message: "setOutfit needs a prompt, a reference image, or both."
             )
         }
-        if image != nil, model?.hasReferenceImage == false {
+        if hasImage, model?.hasReferenceImage == false {
             throw VtonPluginError(
                 code: ErrorCodes.invalidInput,
                 message: "Model \(model?.name ?? "?") does not accept a reference image."
             )
         }
+        let image = try loadReferenceImage(args)
 
         try await manager.setPrompt(
             DecartPrompt(
@@ -186,6 +191,59 @@ final class VtonSessionController {
                 enrich: ChannelCodec.bool(args, "enhance", true)
             )
         )
+    }
+
+    /// Switches the capturer behind the already-published LiveKit track.
+    ///
+    /// LiveKit keeps the track publication and sender intact, so the Decart
+    /// session, outfit state and remote stream continue without renegotiation.
+    func switchCamera(_ args: [String: Any]) async throws -> String {
+        #if targetEnvironment(simulator)
+        throw VtonPluginError(
+            code: ErrorCodes.cameraUnavailable,
+            message: "Camera switching is unavailable in the iOS Simulator."
+        )
+        #else
+        guard manager != nil, lastConnectionState.isConnected else {
+            throw VtonPluginError(
+                code: ErrorCodes.notConnected,
+                message: "No live session. Call connect() before switchCamera()."
+            )
+        }
+        guard let track = localStream?.videoTrack as? LocalVideoTrack,
+              let capturer = track.capturer as? CameraCapturer
+        else {
+            throw VtonPluginError(
+                code: ErrorCodes.cameraUnavailable,
+                message: "The live session does not have a switchable local camera track."
+            )
+        }
+
+        let target = ChannelCodec.position(ChannelCodec.string(args, "facing"))
+        do {
+            _ = try await capturer.set(cameraPosition: target)
+        } catch {
+            throw VtonPluginError(
+                code: ErrorCodes.cameraUnavailable,
+                message: "Could not switch to the \(ChannelCodec.positionToWire(target)) "
+                    + "camera: \(error.localizedDescription)"
+            )
+        }
+        guard capturer.position == target else {
+            throw VtonPluginError(
+                code: ErrorCodes.cameraUnavailable,
+                message: "The requested \(ChannelCodec.positionToWire(target)) camera "
+                    + "is not available on this device."
+            )
+        }
+
+        if let processor = capturer.processor as? MirroringVideoProcessor {
+            processor.cameraPosition = capturer.position
+        }
+        cameraPosition = capturer.position
+        events.send(ChannelCodec.localStreamEvent())
+        return ChannelCodec.positionToWire(cameraPosition)
+        #endif
     }
 
     func checkConnectivity(_ args: [String: Any]) async throws -> [String: Any?] {
@@ -228,6 +286,71 @@ final class VtonSessionController {
     }
 
     // MARK: - Internals
+
+    /// Resolves either channel bytes or a native file path into SDK input.
+    ///
+    /// `.mappedIfSafe` avoids eagerly copying the whole file into another heap
+    /// allocation. The SDK still receives ordinary `Data`, so this does not
+    /// change its API or the lifetime rules of `DecartPrompt`.
+    private func loadReferenceImage(_ args: [String: Any]) throws -> Data? {
+        let bytes = ChannelCodec.bytes(args, "referenceImage")
+        let path = ChannelCodec.string(args, "referenceImagePath")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if bytes != nil, let path, !path.isEmpty {
+            throw VtonPluginError(
+                code: ErrorCodes.invalidInput,
+                message: "Pass referenceImage or referenceImagePath, not both."
+            )
+        }
+        if let bytes { return bytes }
+        guard let path, !path.isEmpty else { return nil }
+
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: path)
+            guard attributes[.type] as? FileAttributeType == .typeRegular,
+                  let size = attributes[.size] as? NSNumber,
+                  size.int64Value > 0,
+                  size.int64Value <= Self.maxReferenceImageBytes
+            else {
+                throw VtonPluginError(
+                    code: ErrorCodes.invalidInput,
+                    message: "Reference image must be a non-empty file no larger than 5 MB."
+                )
+            }
+
+            let data = try Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe)
+            guard Self.isSupportedImage(data) else {
+                throw VtonPluginError(
+                    code: ErrorCodes.invalidInput,
+                    message: "Reference image must be valid JPEG, PNG, or WebP data."
+                )
+            }
+            return data
+        } catch let error as VtonPluginError {
+            throw error
+        } catch {
+            throw VtonPluginError(
+                code: ErrorCodes.invalidInput,
+                message: "Could not read reference image at '\(path)': "
+                    + error.localizedDescription
+            )
+        }
+    }
+
+    private static func isSupportedImage(_ data: Data) -> Bool {
+        let bytes = [UInt8](data.prefix(12))
+        let jpeg = bytes.count >= 3
+            && bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff
+        let pngSignature: [UInt8] = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+        let png = bytes.count >= 8 && Array(bytes.prefix(8)) == pngSignature
+        let webp = bytes.count >= 12
+            && String(bytes: bytes[0..<4], encoding: .ascii) == "RIFF"
+            && String(bytes: bytes[8..<12], encoding: .ascii) == "WEBP"
+        return jpeg || png || webp
+    }
+
+    private static let maxReferenceImageBytes: Int64 = 5 * 1024 * 1024
 
     /// Fails fast with a clear code when the camera has not been authorised.
     ///

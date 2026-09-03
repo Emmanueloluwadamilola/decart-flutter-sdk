@@ -8,6 +8,8 @@ import ai.decart.sdk.RealtimeModel
 import ai.decart.sdk.realtime.CheckConnectivityOptions
 import ai.decart.sdk.realtime.ConnectOptions
 import ai.decart.sdk.realtime.InitialPrompt
+import ai.decart.sdk.realtime.FacingMode
+import ai.decart.sdk.realtime.MirrorMode
 import ai.decart.sdk.realtime.RealTimeClient
 import ai.decart.sdk.realtime.RealtimeMediaStream
 import ai.decart.vton.flutter.ChannelCodec.bool
@@ -17,6 +19,12 @@ import ai.decart.vton.flutter.ChannelCodec.stringOrNull
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.util.Base64
+import android.util.Base64OutputStream
+import io.livekit.android.room.track.CameraPosition
+import io.livekit.android.room.track.LocalVideoTrack
+import java.io.ByteArrayOutputStream
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -46,6 +54,8 @@ internal class VtonSessionController(
 
     private var model: RealtimeModel? = null
     private var supportsReferenceImage: Boolean = true
+    private var cameraFacing: FacingMode = FacingMode.FRONT
+    private var mirrorMode: MirrorMode = MirrorMode.AUTO
 
     private val collectors = mutableListOf<Job>()
 
@@ -102,9 +112,11 @@ internal class VtonSessionController(
 
         model = requestedModel
         supportsReferenceImage = args.bool("supportsReferenceImage", true)
+        cameraFacing = requestedFacing
+        mirrorMode = requestedMirror
 
         val prompt = args.stringOrNull("prompt")?.takeIf { it.isNotBlank() }
-        val imageBase64 = encodeReferenceImage(args.bytes("referenceImage"))
+        val imageBase64 = encodeReferenceImage(args)
         val enhance = args.bool("enhance", true)
 
         val stream = try {
@@ -181,29 +193,30 @@ internal class VtonSessionController(
         }
 
         val prompt = args.stringOrNull("prompt")?.takeIf { it.isNotBlank() }
-        val imageBytes = args.bytes("referenceImage")?.takeIf { it.isNotEmpty() }
+        val hasImage = hasReferenceImage(args)
         val enhance = args.bool("enhance", true)
         val timeoutMs = args.long("timeoutMs", 30_000L)
 
-        if (prompt == null && imageBytes == null) {
+        if (prompt == null && !hasImage) {
             throw VtonPluginException(
                 ErrorCodes.INVALID_INPUT,
                 "setOutfit needs a prompt, a reference image, or both.",
             )
         }
-        if (imageBytes != null && !supportsReferenceImage) {
+        if (hasImage && !supportsReferenceImage) {
             throw VtonPluginException(
                 ErrorCodes.INVALID_INPUT,
                 "Model ${model?.name} does not accept a reference image.",
             )
         }
+        val imageBase64 = encodeReferenceImage(args)
 
         if (supportsReferenceImage) {
             // set_image carries prompt + image + enhance atomically, and a null
             // image explicitly clears the previous one. This is the whole-state
             // replace the API documents.
             realtimeClient.setImage(
-                imageBase64 = encodeReferenceImage(imageBytes),
+                imageBase64 = imageBase64,
                 prompt = prompt,
                 enhance = enhance,
                 timeout = timeoutMs,
@@ -217,17 +230,160 @@ internal class VtonSessionController(
         }
     }
 
-    /** Base64 conversion is CPU-heavy and can copy several megabytes. */
-    private suspend fun encodeReferenceImage(bytes: ByteArray?): String? {
-        val image = bytes?.takeIf { it.isNotEmpty() } ?: return null
-        return withContext(Dispatchers.Default) {
-            ImageUtils.byteArrayToBase64(image)
+    /**
+     * Produces the Base64 string required by the Android SDK off the UI thread.
+     *
+     * File-backed input is streamed into the encoder so neither Dart nor
+     * Kotlin holds a second raw-image copy. The resulting Base64 string is
+     * unavoidable because that is the SDK's public input type.
+     */
+    private suspend fun encodeReferenceImage(args: Map<String, Any?>): String? {
+        val bytes = args.bytes("referenceImage")?.takeIf { it.isNotEmpty() }
+        val path = args.stringOrNull("referenceImagePath")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        if (bytes != null && path != null) {
+            throw VtonPluginException(
+                ErrorCodes.INVALID_INPUT,
+                "Pass referenceImage or referenceImagePath, not both.",
+            )
+        }
+        if (bytes != null) {
+            return withContext(Dispatchers.Default) {
+                ImageUtils.byteArrayToBase64(bytes)
+            }
+        }
+        if (path == null) return null
+
+        return withContext(Dispatchers.IO) {
+            try {
+                encodeImageFile(File(path))
+            } catch (e: VtonPluginException) {
+                throw e
+            } catch (e: Throwable) {
+                throw VtonPluginException(
+                    ErrorCodes.INVALID_INPUT,
+                    "Could not read reference image at '$path': " +
+                        (e.message ?: e::class.java.simpleName),
+                    cause = e,
+                )
+            }
         }
     }
 
-    // Note: there is deliberately no `switchCamera` here. Flipping the camera is
-    // orchestrated in Dart as disconnect + reconnect, so that Android and iOS
-    // do exactly the same thing. See DecartVton.switchCamera().
+    private fun hasReferenceImage(args: Map<String, Any?>): Boolean =
+        args.bytes("referenceImage")?.isNotEmpty() == true ||
+            args.stringOrNull("referenceImagePath")?.isNotBlank() == true
+
+    private fun encodeImageFile(file: File): String {
+        if (!file.isFile) {
+            throw VtonPluginException(
+                ErrorCodes.INVALID_INPUT,
+                "Reference image path is not a readable file: ${file.path}",
+            )
+        }
+        val size = file.length()
+        if (size <= 0L || size > MAX_REFERENCE_IMAGE_BYTES) {
+            throw VtonPluginException(
+                ErrorCodes.INVALID_INPUT,
+                "Reference images must be non-empty and 5 MB or smaller.",
+            )
+        }
+        val header = file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(12)
+            var count = 0
+            while (count < buffer.size) {
+                val read = input.read(buffer, count, buffer.size - count)
+                if (read < 0) break
+                count += read
+            }
+            buffer.copyOf(count)
+        }
+        if (!isSupportedImage(header)) {
+            throw VtonPluginException(
+                ErrorCodes.INVALID_INPUT,
+                "Reference image must be valid JPEG, PNG, or WebP data.",
+            )
+        }
+
+        val encodedSize = (((size + 2L) / 3L) * 4L).toInt()
+        val encoded = ByteArrayOutputStream(encodedSize)
+        Base64OutputStream(encoded, Base64.NO_WRAP).use { base64 ->
+            file.inputStream().buffered().use { input -> input.copyTo(base64) }
+        }
+        return encoded.toString(Charsets.US_ASCII.name())
+    }
+
+    private fun isSupportedImage(bytes: ByteArray): Boolean {
+        val jpeg = bytes.size >= 3 &&
+            bytes[0] == 0xff.toByte() &&
+            bytes[1] == 0xd8.toByte() &&
+            bytes[2] == 0xff.toByte()
+        val png = bytes.size >= 8 &&
+            bytes.sliceArray(0 until 8).contentEquals(
+                byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a),
+            )
+        val webp = bytes.size >= 12 &&
+            String(bytes, 0, 4, Charsets.US_ASCII) == "RIFF" &&
+            String(bytes, 8, 4, Charsets.US_ASCII) == "WEBP"
+        return jpeg || png || webp
+    }
+
+    /**
+     * Replaces the capturer behind the already-published LiveKit track.
+     *
+     * `restartTrack` moves the existing renderers to the replacement WebRTC
+     * track and updates the current sender without reconnecting the Room. A new
+     * mirror processor is supplied because Decart's Android stream factory
+     * chooses that processor from the initial camera only.
+     */
+    fun switchCamera(args: Map<String, Any?>): String {
+        val realtimeClient = requireRealtime()
+        if (!realtimeClient.isConnected()) {
+            throw VtonPluginException(
+                ErrorCodes.NOT_CONNECTED,
+                "No live session. Call connect() before switchCamera().",
+            )
+        }
+
+        val track = localStream?.videoTrack as? LocalVideoTrack
+            ?: throw VtonPluginException(
+                ErrorCodes.CAMERA_UNAVAILABLE,
+                "The live session does not have a switchable local camera track.",
+            )
+        val targetFacing = ChannelCodec.facing(args.stringOrNull("facing"))
+        val targetPosition = if (targetFacing == FacingMode.BACK) {
+            CameraPosition.BACK
+        } else {
+            CameraPosition.FRONT
+        }
+        val shouldMirror = when (mirrorMode) {
+            MirrorMode.OFF -> false
+            MirrorMode.ON -> true
+            MirrorMode.AUTO -> targetFacing == FacingMode.FRONT
+        }
+
+        try {
+            track.restartTrack(
+                track.options.copy(
+                    deviceId = null,
+                    position = targetPosition,
+                ),
+                if (shouldMirror) AndroidMirrorProcessorFactory.create() else null,
+            )
+        } catch (e: Throwable) {
+            throw VtonPluginException(
+                cameraFailureCode(e),
+                "Could not switch to the ${ChannelCodec.facingToWire(targetFacing)} camera: " +
+                    "${e.message ?: e::class.java.simpleName}.",
+                cause = e,
+            )
+        }
+
+        cameraFacing = targetFacing
+        events.send(ChannelCodec.localStreamEvent())
+        return ChannelCodec.facingToWire(cameraFacing)
+    }
 
     suspend fun checkConnectivity(args: Map<String, Any?>): Map<String, Any?> {
         val realtimeClient = requireRealtime()
@@ -388,4 +544,8 @@ internal class VtonSessionController(
 
     private fun cameraFailureCode(e: Throwable): String =
         if (e is SecurityException) ErrorCodes.PERMISSION_DENIED else ErrorCodes.CAMERA_UNAVAILABLE
+
+    private companion object {
+        const val MAX_REFERENCE_IMAGE_BYTES = 5L * 1024L * 1024L
+    }
 }

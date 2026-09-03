@@ -32,7 +32,7 @@ This is an independent Flutter wrapper and is not an official Decart package.
 - Android and iOS native video rendering.
 - VTON 3.5 / `lucy-vton-latest` at its native 1280x720 geometry.
 - Live prompt and JPEG, PNG or WebP garment updates without reconnecting.
-- Front/back camera switching with complete session restoration.
+- In-session front/back camera switching without creating a new Decart session.
 - Typed connection state, quality, events and errors.
 - Serialized lifecycle operations that cannot tear down one another.
 - Background disconnect and foreground recovery via `VtonLifecycleObserver`.
@@ -178,6 +178,16 @@ await vton.setOutfit(
 );
 ```
 
+If the picker already returned a local file, prefer the file-backed form. It
+keeps the full image out of Dart memory and the platform channel:
+
+```dart
+await vton.setOutfit(
+  prompt: 'Substitute the current top with this jacket, worn open',
+  referenceImagePath: pickedImage.path,
+);
+```
+
 Every update replaces the complete server-side state. To retain the current
 garment while changing the text:
 
@@ -187,9 +197,11 @@ await vton.setOutfit(
 );
 ```
 
-Reference images must be valid JPEG, PNG or WebP data, no larger than 5 MB.
-Clean garment-only images on plain backgrounds, at least 512x512, produce the
-best results.
+Reference images can be supplied as bytes or an absolute local file path. They
+must contain valid JPEG, PNG or WebP data and be no larger than 5 MB. Keep a
+file-backed image available while its outfit may be restored after an app
+lifecycle interruption. Clean garment-only images on plain backgrounds, at
+least 512x512, produce the best results.
 
 ## Authentication
 
@@ -260,12 +272,15 @@ export async function POST(request: Request) {
 }
 ```
 
-The provider is called when the native client needs a fresh credential,
-including new connections, camera switches, and lifecycle restoration. Do not
-cache the token in preferences, print it, or send a `dct_` credential from the
-production app. The production initializer accepts only `ek_...` client tokens;
-permanent and unrecognized credentials fail before crossing the platform
-channel. See
+The provider is called when the native client needs a fresh credential. The
+client created by `initialize()` is reused for the first connection; later new
+connections and lifecycle restoration request another token. In-session camera
+switches keep the existing native client and session.
+If the initial token expires before use, the first connection refreshes it and
+retries once. Do not cache the token in preferences, print it, or send a `dct_`
+credential from the production app. The production initializer accepts only
+`ek_...` client tokens; permanent and unrecognized credentials fail before
+crossing the platform channel. See
 Decart's [client-token documentation](https://docs.platform.decart.ai/getting-started/client-tokens)
 for the backend token-creation request.
 
@@ -359,8 +374,8 @@ input to the end user.
 | `initialize(clientTokenProvider: ...)` | Configures authentication and native clients. |
 | `initializeForDevelopment(apiKey: ...)` | Debug-build-only direct key setup for local testing. |
 | `connect(...)` | Opens a camera/VTON session. |
-| `setOutfit(...)` | Atomically replaces the outfit state. |
-| `switchCamera()` | Reconnects with the other camera and complete prior configuration. |
+| `setOutfit(...)` | Atomically replaces the outfit state using a prompt, image bytes, or a native file path. |
+| `switchCamera()` | Switches the published camera track in place; the session ID and outfit remain unchanged. |
 | `checkConnectivity()` | Tests whether the network supports realtime media. |
 | `disconnect()` | Releases the session and camera. |
 | `resumeLastSession()` | Restores the complete prior configuration with a fresh token. |
@@ -390,8 +405,9 @@ Common causes:
   calling `connect()`.
 - **Connectivity failure (`webrtc`)** — use `checkConnectivity()` before
   connecting on restrictive networks.
-- **Invalid garment image (`invalidInput`)** — images are validated for type
-  (JPEG/PNG/WebP) and size (5 MB max) before crossing the platform channel.
+- **Invalid garment image (`invalidInput`)** — byte and file-backed images are
+  validated for type (JPEG/PNG/WebP) and size (5 MB max). File-backed input
+  sends only its path through the platform channel.
 
 ## Privacy and security
 
@@ -414,7 +430,8 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting and
 ## Limitations
 
 - iOS requires Swift Package Manager and iOS 17.
-- Camera switching reconnects and creates a new session ID.
+- Camera switching briefly interrupts local capture while the other lens opens,
+  but preserves the Decart session and session ID.
 - Audio and batch/queue APIs are not exposed.
 - Android platform views use hybrid composition.
 - Android uses hybrid composition for reliable native rendering. Avoid animating

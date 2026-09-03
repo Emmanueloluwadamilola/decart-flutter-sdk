@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:decart_vton_flutter/decart_vton_flutter.dart';
 import 'package:decart_vton_flutter/src/decart_vton_platform.dart';
@@ -18,11 +19,18 @@ class _FakeHost {
   /// Per-method canned replies. A `PlatformException` value is thrown instead.
   final Map<String, Object?> replies = <String, Object?>{};
 
+  /// Optional per-call replies for methods that change behavior between
+  /// attempts, such as an expired-token retry.
+  final Map<String, List<Object?>> replySequences = <String, List<Object?>>{};
+
   void install() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(methodChannel, (MethodCall call) async {
           calls.add(call);
-          final reply = replies[call.method];
+          final sequence = replySequences[call.method];
+          final reply = sequence != null && sequence.isNotEmpty
+              ? sequence.removeAt(0)
+              : replies[call.method];
           if (reply is PlatformException) throw reply;
           if (reply is Future<Object?>) return reply;
           return reply;
@@ -81,6 +89,22 @@ void main() {
     });
   }
 
+  Future<File> createReferenceImageFile({
+    List<int> bytes = const <int>[0xff, 0xd8, 0xff, 1, 2, 3],
+  }) async {
+    final directory = await Directory.systemTemp.createTemp(
+      'decart-vton-test-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    final file = File('${directory.path}/garment.jpg');
+    await file.writeAsBytes(bytes, flush: true);
+    return file;
+  }
+
   setUp(() {
     platform = DecartVtonPlatform(
       methodChannelName: methodChannelName,
@@ -88,6 +112,7 @@ void main() {
     );
     host = _FakeHost(platform.methodChannel)..install();
     host.replies['connect'] = <Object?, Object?>{'sessionId': 'sess-123'};
+    host.replies['switchCamera'] = <Object?, Object?>{'facing': 'back'};
     host.replies['isConnected'] = true;
 
     streamHandler = MockStreamHandler.inline(
@@ -263,6 +288,63 @@ void main() {
       );
     });
 
+    test('reuses the initialized client for the first connection', () async {
+      var providerCalls = 0;
+      await vton.initialize(
+        clientTokenProvider: () async => 'ek_token-${++providerCalls}',
+      );
+      await vton.connect(model: VtonModel.lucyVtonLatest);
+
+      expect(providerCalls, 1);
+      expect(
+        host.calls.where((MethodCall call) => call.method == 'initialize'),
+        hasLength(1),
+      );
+      expect(host.wasCalled('release'), isFalse);
+    });
+
+    test('refreshes the client before a later connection', () async {
+      var providerCalls = 0;
+      await vton.initialize(
+        clientTokenProvider: () async => 'ek_token-${++providerCalls}',
+      );
+      await vton.connect(model: VtonModel.lucyVtonLatest);
+      await vton.connect(model: VtonModel.lucyVtonLatest);
+
+      expect(providerCalls, 2);
+      expect(
+        host.calls.where((MethodCall call) => call.method == 'initialize'),
+        hasLength(2),
+      );
+      expect(host.wasCalled('release'), isTrue);
+    });
+
+    test(
+      'refreshes and retries an expired initialized credential once',
+      () async {
+        var providerCalls = 0;
+        host.replySequences['connect'] = <Object?>[
+          PlatformException(
+            code: 'INVALID_API_KEY',
+            message: 'client token expired',
+          ),
+          <Object?, Object?>{'sessionId': 'sess-after-refresh'},
+        ];
+
+        await vton.initialize(
+          clientTokenProvider: () async => 'ek_token-${++providerCalls}',
+        );
+        await vton.connect(model: VtonModel.lucyVtonLatest);
+
+        expect(providerCalls, 2);
+        expect(vton.sessionId, 'sess-after-refresh');
+        expect(
+          host.calls.where((MethodCall call) => call.method == 'connect'),
+          hasLength(2),
+        );
+      },
+    );
+
     test('sends the model geometry and defaults the video config', () async {
       await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
       await vton.connect(model: VtonModel.lucyVton3);
@@ -330,6 +412,23 @@ void main() {
       expect(args['enhance'], isFalse);
       expect(vton.currentOutfit?.prompt, 'a red parka');
     });
+
+    test(
+      'sends a file path without loading image bytes into the channel',
+      () async {
+        final image = await createReferenceImageFile();
+        await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
+        await vton.connect(
+          model: VtonModel.lucyVtonLatest,
+          initialOutfit: VtonOutfit(referenceImagePath: image.path),
+        );
+
+        final args = host.argsOf('connect');
+        expect(args['referenceImage'], isNull);
+        expect(args['referenceImagePath'], image.path);
+        expect(vton.currentOutfit?.referenceImagePath, image.path);
+      },
+    );
 
     test('rejects a reference image on a model that cannot use one', () async {
       await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
@@ -458,6 +557,76 @@ void main() {
       );
       expect(host.wasCalled('setOutfit'), isFalse);
     });
+
+    test('rejects a missing image path before the platform channel', () async {
+      await connectAndGoLive();
+
+      await expectLater(
+        vton.setOutfit(referenceImagePath: '/definitely/missing/garment.jpg'),
+        throwsA(
+          isA<DecartVtonException>().having(
+            (DecartVtonException error) => error.code,
+            'code',
+            VtonErrorCode.invalidInput,
+          ),
+        ),
+      );
+      expect(host.wasCalled('setOutfit'), isFalse);
+    });
+
+    test('rejects an unsupported file signature', () async {
+      await connectAndGoLive();
+      final image = await createReferenceImageFile(bytes: <int>[1, 2, 3]);
+
+      await expectLater(
+        vton.setOutfit(referenceImagePath: image.path),
+        throwsA(
+          isA<DecartVtonException>().having(
+            (DecartVtonException error) => error.code,
+            'code',
+            VtonErrorCode.invalidInput,
+          ),
+        ),
+      );
+      expect(host.wasCalled('setOutfit'), isFalse);
+    });
+
+    test('rejects byte and path image sources together', () async {
+      await connectAndGoLive();
+      final image = await createReferenceImageFile();
+
+      await expectLater(
+        vton.setOutfit(
+          referenceImage: _jpegBytes(),
+          referenceImagePath: image.path,
+        ),
+        throwsArgumentError,
+      );
+      expect(host.wasCalled('setOutfit'), isFalse);
+    });
+
+    test(
+      'rejects an oversized file from metadata without loading it',
+      () async {
+        await connectAndGoLive();
+        final image = await createReferenceImageFile();
+        final handle = await image.open(mode: FileMode.write);
+        await handle.truncate(5 * 1024 * 1024 + 1);
+        await handle.close();
+
+        await expectLater(
+          vton.setOutfit(referenceImagePath: image.path),
+          throwsA(
+            isA<DecartVtonException>().having(
+              (DecartVtonException error) => error.code,
+              'code',
+              VtonErrorCode.invalidInput,
+            ),
+          ),
+        );
+        expect(host.wasCalled('setOutfit'), isFalse);
+      },
+    );
   });
 
   group('setOutfit success paths', () {
@@ -482,6 +651,19 @@ void main() {
       final args = host.argsOf('setOutfit');
       expect(args['prompt'], isNull);
       expect(args['referenceImage'], garment);
+    });
+
+    test('file-backed image sends only its native path', () async {
+      await connectAndGoLive();
+      final image = await createReferenceImageFile();
+
+      await vton.setOutfit(referenceImagePath: image.path);
+
+      final args = host.argsOf('setOutfit');
+      expect(args['prompt'], isNull);
+      expect(args['referenceImage'], isNull);
+      expect(args['referenceImagePath'], image.path);
+      expect(vton.currentOutfit?.referenceImagePath, image.path);
     });
 
     test('prompt and image together send both', () async {
@@ -538,6 +720,78 @@ void main() {
         ),
       );
       expect(vton.currentOutfit?.prompt, 'the original parka');
+    });
+  });
+
+  // ───────────────────────────────────────────────────────── switch camera ──
+
+  group('switchCamera', () {
+    test('switches the published track without reconnecting', () async {
+      var providerCalls = 0;
+      await vton.initialize(
+        clientTokenProvider: () async => 'ek_token-${++providerCalls}',
+      );
+      await vton.connect(
+        model: VtonModel.lucyVtonLatest,
+        initialOutfit: const VtonOutfit(prompt: 'a navy blazer'),
+      );
+      await emit(<String, Object?>{
+        'type': 'connectionState',
+        'state': 'generating',
+      });
+
+      final sessionId = vton.sessionId;
+      final facing = await vton.switchCamera();
+
+      expect(facing, VtonCameraFacing.back);
+      expect(vton.cameraFacing, VtonCameraFacing.back);
+      expect(vton.sessionId, sessionId);
+      expect(vton.currentOutfit?.prompt, 'a navy blazer');
+      expect(providerCalls, 1);
+      expect(host.argsOf('switchCamera')['facing'], 'back');
+      expect(
+        host.calls.where((MethodCall call) => call.method == 'connect'),
+        hasLength(1),
+      );
+      expect(host.wasCalled('disconnect'), isFalse);
+    });
+
+    test('does not change Dart state when native switching fails', () async {
+      await connectAndGoLive();
+      host.replies['switchCamera'] = PlatformException(
+        code: 'CAMERA_UNAVAILABLE',
+        message: 'No back camera',
+      );
+
+      await expectLater(
+        vton.switchCamera(),
+        throwsA(
+          isA<DecartVtonException>().having(
+            (DecartVtonException error) => error.code,
+            'code',
+            VtonErrorCode.cameraUnavailable,
+          ),
+        ),
+      );
+
+      expect(vton.cameraFacing, VtonCameraFacing.front);
+      expect(host.wasCalled('disconnect'), isFalse);
+    });
+
+    test('requires a live session', () async {
+      await vton.initialize(clientTokenProvider: () async => 'ek_test-token');
+
+      await expectLater(
+        vton.switchCamera(),
+        throwsA(
+          isA<DecartVtonException>().having(
+            (DecartVtonException error) => error.code,
+            'code',
+            VtonErrorCode.notConnected,
+          ),
+        ),
+      );
+      expect(host.wasCalled('switchCamera'), isFalse);
     });
   });
 
@@ -773,6 +1027,21 @@ void main() {
     test('blank prompt does not count as a prompt', () {
       const outfit = VtonOutfit(prompt: '  ');
       expect(outfit.hasPrompt, isFalse);
+    });
+
+    test('copyWith replaces bytes and paths without retaining both', () {
+      const pathOutfit = VtonOutfit(referenceImagePath: '/tmp/garment.jpg');
+      final bytesOutfit = pathOutfit.copyWith(
+        referenceImage: Uint8List.fromList(<int>[0xff, 0xd8, 0xff]),
+      );
+      final restoredPath = bytesOutfit.copyWith(
+        referenceImagePath: '/tmp/other.jpg',
+      );
+
+      expect(bytesOutfit.referenceImagePath, isNull);
+      expect(bytesOutfit.hasReferenceImageBytes, isTrue);
+      expect(restoredPath.referenceImage, isNull);
+      expect(restoredPath.referenceImagePath, '/tmp/other.jpg');
     });
   });
 

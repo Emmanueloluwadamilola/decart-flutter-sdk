@@ -9,6 +9,12 @@ Stable release consolidating the existing realtime virtual try-on integration.
 - `DecartVton`, native video views, lifecycle handling, and production
   client-token authentication.
 - Typed connection state, events, and normalized `VtonErrorCode` failures.
+- Reuses the client created by `initialize()` for the first connection, avoiding
+  a duplicate token request while retaining refresh-on-reconnect behavior.
+- Switches front and back cameras on the existing published track, preserving
+  the Decart session ID, outfit state, and client token.
+- Adds file-backed garment images through `referenceImagePath`, avoiding large
+  Dart heap allocations and platform-channel byte copies for picker files.
 
 ## 0.1.0
 

@@ -17,6 +17,7 @@ const String _tokenEndpoint = String.fromEnvironment('DECART_TOKEN_ENDPOINT');
 const String _developmentApiKey = String.fromEnvironment('DECART_API_KEY');
 const int _maxReferenceImageBytes = 5 * 1024 * 1024;
 
+
 Future<Uint8List> _readLimitedResponse(
   HttpClientResponse response, {
   required int maxBytes,
@@ -142,6 +143,7 @@ class _TryOnPageState extends State<TryOnPage> {
   String? _status;
   String? _garmentName;
   Uint8List? _garment;
+  String? _garmentPath;
   String? _selectedGarmentUrl;
   String? _loadingGarmentUrl;
   _ControlSection? _openSection = _ControlSection.garment;
@@ -358,9 +360,9 @@ class _TryOnPageState extends State<TryOnPage> {
       imageQuality: 90,
     );
     if (picked == null) return;
-    final bytes = await picked.readAsBytes();
     setState(() {
-      _garment = bytes;
+      _garment = null;
+      _garmentPath = picked.path;
       _garmentName = picked.name;
       _selectedGarmentUrl = null;
     });
@@ -405,6 +407,7 @@ class _TryOnPageState extends State<TryOnPage> {
       if (!mounted) return;
       setState(() {
         _garment = bytes;
+        _garmentPath = null;
         _garmentName = name;
         _selectedGarmentUrl = url;
         _status = '$name selected as the reference image.';
@@ -427,6 +430,7 @@ class _TryOnPageState extends State<TryOnPage> {
   Future<void> _clearGarment() async {
     setState(() {
       _garment = null;
+      _garmentPath = null;
       _garmentName = null;
       _selectedGarmentUrl = null;
     });
@@ -434,7 +438,7 @@ class _TryOnPageState extends State<TryOnPage> {
   }
 
   Future<void> _switchCamera() async {
-    await _guard('Switching camera (reconnects)…', () async {
+    await _guard('Switching camera…', () async {
       final facing = await _vton.switchCamera();
       _setStatus('Now using the ${facing.name} camera.');
     });
@@ -449,10 +453,11 @@ class _TryOnPageState extends State<TryOnPage> {
 
   VtonOutfit? _buildOutfit() {
     final prompt = _promptController.text.trim();
-    if (prompt.isEmpty && _garment == null) return null;
+    if (prompt.isEmpty && _garment == null && _garmentPath == null) return null;
     return VtonOutfit(
       prompt: prompt.isEmpty ? null : prompt,
       referenceImage: _garment,
+      referenceImagePath: _garmentPath,
       enhance: _enhance,
     );
   }
@@ -736,7 +741,7 @@ class _TryOnPageState extends State<TryOnPage> {
                 style: TextStyle(fontSize: 11, color: Colors.white54),
               ),
             ),
-            if (_garment != null)
+            if (_garment != null || _garmentPath != null)
               TextButton.icon(
                 onPressed: _busy ? null : _clearGarment,
                 icon: const Icon(Icons.close, size: 15),
@@ -865,7 +870,7 @@ class _TryOnPageState extends State<TryOnPage> {
   }
 
   Widget _buildUploadTile() {
-    final selected = _garment != null && _selectedGarmentUrl == null;
+    final selected = _garmentPath != null && _selectedGarmentUrl == null;
     return Semantics(
       button: true,
       selected: selected,

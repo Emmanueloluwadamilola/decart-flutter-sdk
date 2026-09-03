@@ -61,6 +61,10 @@ enum ChannelCodec {
         wire == "back" ? .back : .front
     }
 
+    static func positionToWire(_ position: AVCaptureDevice.Position) -> String {
+        position == .back ? "back" : "front"
+    }
+
     static func mirror(_ wire: String?) -> MirrorMode {
         switch wire {
         case "off": return .off

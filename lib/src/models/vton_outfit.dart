@@ -23,17 +23,26 @@ import 'package:flutter/foundation.dart';
 /// ```
 @immutable
 class VtonOutfit {
-  /// Creates an outfit from a [prompt], a [referenceImage], or both.
+  /// Creates an outfit from a [prompt], a [referenceImage], a
+  /// [referenceImagePath], or a prompt plus one image source.
   ///
-  /// At least one of [prompt] (non-blank) or [referenceImage] must be provided;
-  /// this is asserted in debug builds and re-validated before the value is sent
-  /// to the platform.
-  const VtonOutfit({this.prompt, this.referenceImage, this.enhance = true})
-    : assert(
-        prompt != null || referenceImage != null,
-        'A VtonOutfit needs at least a prompt or a reference image. '
-        'An outfit with neither would clear the entire try-on state.',
-      );
+  /// [referenceImage] and [referenceImagePath] are mutually exclusive. Use the
+  /// path form for an image already stored on the device so its bytes do not
+  /// have to be loaded into Dart and copied through the platform channel.
+  const VtonOutfit({
+    this.prompt,
+    this.referenceImage,
+    this.referenceImagePath,
+    this.enhance = true,
+  }) : assert(
+         referenceImage == null || referenceImagePath == null,
+         'Pass referenceImage or referenceImagePath, not both.',
+       ),
+       assert(
+         prompt != null || referenceImage != null || referenceImagePath != null,
+         'A VtonOutfit needs at least a prompt or a reference image. '
+         'An outfit with neither would clear the entire try-on state.',
+       );
 
   /// Text description of the garment change.
   ///
@@ -57,6 +66,14 @@ class VtonOutfit {
   /// `true`.
   final Uint8List? referenceImage;
 
+  /// Absolute path to an encoded JPEG, PNG or WebP garment image.
+  ///
+  /// Prefer this when an image picker or camera already produced a local file.
+  /// Native code reads the file directly, avoiding a large Dart heap allocation
+  /// and platform-channel copy. Keep the file available while this outfit may
+  /// be restored by `resumeLastSession()`.
+  final String? referenceImagePath;
+
   /// Whether the server should auto-expand the prompt before applying it.
   ///
   /// Defaults to `true`, matching the documented model default. Set it to
@@ -67,9 +84,16 @@ class VtonOutfit {
   /// Whether this outfit carries a usable text prompt.
   bool get hasPrompt => prompt != null && prompt!.trim().isNotEmpty;
 
-  /// Whether this outfit carries a reference image.
-  bool get hasReferenceImage =>
+  /// Whether this outfit carries in-memory reference-image bytes.
+  bool get hasReferenceImageBytes =>
       referenceImage != null && referenceImage!.isNotEmpty;
+
+  /// Whether this outfit carries a usable native file path.
+  bool get hasReferenceImagePath =>
+      referenceImagePath != null && referenceImagePath!.trim().isNotEmpty;
+
+  /// Whether this outfit carries either supported reference-image source.
+  bool get hasReferenceImage => hasReferenceImageBytes || hasReferenceImagePath;
 
   /// Returns a copy with the given fields replaced.
   ///
@@ -78,6 +102,7 @@ class VtonOutfit {
   VtonOutfit copyWith({
     String? prompt,
     Uint8List? referenceImage,
+    String? referenceImagePath,
     bool? enhance,
     bool clearPrompt = false,
     bool clearReferenceImage = false,
@@ -87,14 +112,28 @@ class VtonOutfit {
       'Pass either prompt: or clearPrompt: true, not both.',
     );
     assert(
-      !(clearReferenceImage && referenceImage != null),
-      'Pass either referenceImage: or clearReferenceImage: true, not both.',
+      referenceImage == null || referenceImagePath == null,
+      'Pass referenceImage or referenceImagePath, not both.',
     );
+    assert(
+      !(clearReferenceImage &&
+          (referenceImage != null || referenceImagePath != null)),
+      'Pass an image source or clearReferenceImage: true, not both.',
+    );
+    final replacingWithBytes = referenceImage != null;
+    final replacingWithPath = referenceImagePath != null;
     return VtonOutfit(
       prompt: clearPrompt ? null : (prompt ?? this.prompt),
       referenceImage: clearReferenceImage
           ? null
+          : replacingWithPath
+          ? null
           : (referenceImage ?? this.referenceImage),
+      referenceImagePath: clearReferenceImage
+          ? null
+          : replacingWithBytes
+          ? null
+          : (referenceImagePath ?? this.referenceImagePath),
       enhance: enhance ?? this.enhance,
     );
   }
@@ -105,16 +144,22 @@ class VtonOutfit {
     return other is VtonOutfit &&
         other.prompt == prompt &&
         other.enhance == enhance &&
+        other.referenceImagePath == referenceImagePath &&
         _bytesEqual(other.referenceImage, referenceImage);
   }
 
   @override
-  int get hashCode => Object.hash(prompt, enhance, referenceImage?.length);
+  int get hashCode =>
+      Object.hash(prompt, enhance, referenceImagePath, referenceImage?.length);
 
   @override
   String toString() =>
       'VtonOutfit(prompt: ${prompt ?? '<none>'}, '
-      'referenceImage: ${hasReferenceImage ? '${referenceImage!.length} bytes' : '<none>'}, '
+      'referenceImage: ${hasReferenceImageBytes
+          ? '${referenceImage!.length} bytes'
+          : hasReferenceImagePath
+          ? referenceImagePath
+          : '<none>'}, '
       'enhance: $enhance)';
 
   static bool _bytesEqual(Uint8List? a, Uint8List? b) {

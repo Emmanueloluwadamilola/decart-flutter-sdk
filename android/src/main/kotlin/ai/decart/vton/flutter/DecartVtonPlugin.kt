@@ -113,6 +113,11 @@ class DecartVtonPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                         result.success(null)
                     }
 
+                    "switchCamera" -> {
+                        val facing = activeController.switchCamera(args)
+                        result.success(mapOf("facing" to facing))
+                    }
+
                     "disconnect" -> {
                         activeController.disconnect()
                         result.success(null)

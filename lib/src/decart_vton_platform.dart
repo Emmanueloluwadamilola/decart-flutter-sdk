@@ -69,6 +69,17 @@ class DecartVtonPlatform {
   Future<void> setOutfit(Map<String, Object?> args) =>
       _invokeVoid('setOutfit', args);
 
+  /// Switches the camera backing the currently published native video track.
+  ///
+  /// Returns the facing the native capturer actually selected.
+  Future<String> switchCamera({required String facing}) async {
+    final result = await _invoke<Map<Object?, Object?>>(
+      'switchCamera',
+      <String, Object?>{'facing': facing},
+    );
+    return (result?['facing'] as String?) ?? facing;
+  }
+
   /// Tears the session down but keeps the native client alive.
   Future<void> disconnect() =>
       _invokeVoid('disconnect', const <String, Object?>{});

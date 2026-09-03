@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 // Uint8List comes from foundation.dart's re-export of dart:typed_data;
 // importing it directly is flagged as unnecessary.
@@ -96,6 +97,7 @@ class DecartVton {
   VtonCameraFacing _facing = VtonCameraFacing.front;
   _ConnectRequest? _lastConnect;
   _ClientConfiguration? _clientConfiguration;
+  bool _nativeClientCredentialUnused = false;
   bool _sessionWasDisconnected = false;
   Future<void> _operationTail = Future<void>.value();
 
@@ -163,8 +165,11 @@ class DecartVton {
   /// Configures and creates the native Decart client.
   ///
   /// Call once before [connect]. Calling it again while already initialised is
-  /// a no-op unless [force] is set. A fresh token is requested before every new
-  /// public connection, camera switch, or lifecycle restoration.
+  /// a no-op unless [force] is set. The client created here is reused for the
+  /// first connection instead of immediately minting a duplicate token. Later
+  /// connections and lifecycle restorations request a fresh token; an
+  /// in-session camera switch does not. If the initial token expires before it
+  /// is used, the first connection refreshes it and retries once.
   ///
   /// [clientTokenProvider] must obtain a fresh `ek_…` client token from your
   /// own backend. Permanent Decart credentials are rejected and must never be
@@ -299,7 +304,7 @@ class DecartVton {
     _assertInitialized();
 
     if (initialOutfit != null) {
-      _validateOutfit(initialOutfit, model);
+      await _validateOutfit(initialOutfit, model);
     }
     if ((model == VtonModel.lucyVtonLatest || model == VtonModel.lucyVton35) &&
         resolution == VtonResolution.p1080) {
@@ -309,7 +314,20 @@ class DecartVton {
         'resolution unset.',
       );
     }
-    if (refreshToken) await _refreshNativeClient();
+    var reusedInitialCredential = false;
+    if (refreshToken) {
+      if (_nativeClientCredentialUnused) {
+        // initialize() has already created a native client with a credential
+        // that has not opened a session. Consume it rather than calling the
+        // application's token endpoint twice for the common
+        // initialize() -> connect() sequence.
+        _nativeClientCredentialUnused = false;
+        reusedInitialCredential = true;
+      } else {
+        await _refreshNativeClient();
+        _nativeClientCredentialUnused = false;
+      }
+    }
 
     _model = model;
     _facing = camera;
@@ -324,7 +342,7 @@ class DecartVton {
     );
 
     final effectiveVideo = video ?? const VtonVideoConfig();
-    final sessionId = await _platform.connect(<String, Object?>{
+    final connectArguments = <String, Object?>{
       'model': model.id,
       'width': model.width,
       'height': model.height,
@@ -337,8 +355,28 @@ class DecartVton {
       'video': effectiveVideo.toMap(),
       'prompt': initialOutfit?.prompt,
       'referenceImage': initialOutfit?.referenceImage,
+      'referenceImagePath': initialOutfit?.hasReferenceImagePath == true
+          ? initialOutfit!.referenceImagePath!.trim()
+          : null,
       'enhance': initialOutfit?.enhance ?? true,
-    });
+    };
+
+    String? sessionId;
+    try {
+      sessionId = await _platform.connect(connectArguments);
+    } on DecartVtonException catch (error) {
+      if (!reusedInitialCredential ||
+          error.code != VtonErrorCode.invalidApiKey) {
+        rethrow;
+      }
+
+      // The initialized client may have sat unused long enough for its token
+      // to expire. Refresh only after an authoritative auth rejection, then
+      // retry once. A second failure is returned to the caller unchanged.
+      await _refreshNativeClient();
+      _nativeClientCredentialUnused = false;
+      sessionId = await _platform.connect(connectArguments);
+    }
 
     _sessionId ??= sessionId;
     _currentOutfit = initialOutfit;
@@ -368,8 +406,10 @@ class DecartVton {
   ///
   /// ## Arguments
   ///
-  /// Either pass [outfit], or pass some combination of [prompt],
-  /// [referenceImage] and [enhance] — not both forms at once.
+  /// Either pass [outfit], or pass some combination of [prompt], one of
+  /// [referenceImage] or [referenceImagePath], and [enhance] — not both forms
+  /// at once. Prefer [referenceImagePath] when the image already exists on
+  /// disk; native code reads it without copying all of its bytes through Dart.
   ///
   /// At least one of a non-blank prompt or a reference image is required. An
   /// update with neither would clear everything, which is almost never what
@@ -394,6 +434,7 @@ class DecartVton {
   Future<void> setOutfit({
     String? prompt,
     Uint8List? referenceImage,
+    String? referenceImagePath,
     bool enhance = true,
     VtonOutfit? outfit,
     Duration timeout = const Duration(seconds: 30),
@@ -401,6 +442,7 @@ class DecartVton {
     () => _setOutfitUnsafe(
       prompt: prompt,
       referenceImage: referenceImage,
+      referenceImagePath: referenceImagePath,
       enhance: enhance,
       outfit: outfit,
       timeout: timeout,
@@ -410,6 +452,7 @@ class DecartVton {
   Future<void> _setOutfitUnsafe({
     required String? prompt,
     required Uint8List? referenceImage,
+    required String? referenceImagePath,
     required bool enhance,
     required VtonOutfit? outfit,
     required Duration timeout,
@@ -418,11 +461,14 @@ class DecartVton {
     _assertInitialized();
 
     if (outfit != null &&
-        (prompt != null || referenceImage != null || enhance != true)) {
+        (prompt != null ||
+            referenceImage != null ||
+            referenceImagePath != null ||
+            enhance != true)) {
       throw ArgumentError(
         'Pass either outfit:, or the individual prompt:/referenceImage:/'
-        'enhance: arguments — not both. Mixing them is ambiguous about which '
-        'wins.',
+        'referenceImagePath:/enhance: arguments — not both. Mixing them is '
+        'ambiguous about which wins.',
       );
     }
 
@@ -436,9 +482,10 @@ class DecartVton {
 
     // Validate the raw arguments *before* constructing a VtonOutfit, so callers
     // get this method's contextual message rather than the value class's assert.
-    _validateFields(
+    await _validateFields(
       prompt: outfit?.prompt ?? prompt,
       referenceImage: outfit?.referenceImage ?? referenceImage,
+      referenceImagePath: outfit?.referenceImagePath ?? referenceImagePath,
       model: model,
     );
 
@@ -447,6 +494,7 @@ class DecartVton {
         VtonOutfit(
           prompt: prompt,
           referenceImage: referenceImage,
+          referenceImagePath: referenceImagePath,
           enhance: enhance,
         );
 
@@ -464,6 +512,9 @@ class DecartVton {
       'referenceImage': effective.hasReferenceImage
           ? effective.referenceImage
           : null,
+      'referenceImagePath': effective.hasReferenceImagePath
+          ? effective.referenceImagePath!.trim()
+          : null,
       'enhance': effective.enhance,
       'timeoutMs': timeout.inMilliseconds,
     });
@@ -473,17 +524,10 @@ class DecartVton {
 
   /// Flips between the front and back cameras.
   ///
-  /// **This reconnects the session.** Neither native SDK exposes an in-session
-  /// camera flip on its public API at the versions this plugin targets
-  /// (`decart-android` 0.7.10, `decart-ios` v0.6.10), so the honest
-  /// implementation is: tear the session down, rebuild the capture stream on
-  /// the other camera, and connect again with the same model, settings and
-  /// [currentOutfit]. Expect roughly a second of black frames and a new
-  /// [sessionId].
-  ///
-  /// It is implemented in Dart rather than natively precisely so that both
-  /// platforms do the identical thing. See IMPLEMENTATION.md for the faster
-  /// per-platform path if the reconnect is unacceptable for your use case.
+  /// The existing published video track is updated in place, so this does not
+  /// disconnect, request another client token, create a new Decart session, or
+  /// lose [currentOutfit]. A short camera-capture interruption can still occur
+  /// while the device opens the other lens.
   ///
   /// Returns the camera now in use.
   ///
@@ -492,8 +536,7 @@ class DecartVton {
   Future<VtonCameraFacing> switchCamera() => _serialize(() async {
     _assertNotDisposed();
     _assertInitialized();
-    final previous = _lastConnect;
-    if (previous == null || !_connectionState.isInSession) {
+    if (_lastConnect == null || !_connectionState.isLive) {
       throw const DecartVtonException.local(
         VtonErrorCode.notConnected,
         'switchCamera() requires a live session.',
@@ -501,17 +544,10 @@ class DecartVton {
     }
 
     final target = _facing.flipped;
-    await _disconnectUnsafe();
-    await _connectUnsafe(
-      model: previous.model,
-      initialOutfit: _currentOutfit,
-      camera: target,
-      mirror: previous.mirror,
-      resolution: previous.resolution,
-      video: previous.video,
-      connectTimeout: previous.connectTimeout,
-      refreshToken: true,
-    );
+    final selected = await _platform.switchCamera(facing: target.name);
+    _facing = selected == VtonCameraFacing.back.name
+        ? VtonCameraFacing.back
+        : VtonCameraFacing.front;
     return _facing;
   });
 
@@ -600,6 +636,7 @@ class DecartVton {
     }
     _initialized = false;
     _clientConfiguration = null;
+    _nativeClientCredentialUnused = false;
     await _eventController.close();
     await _stateController.close();
     await _errorController.close();
@@ -680,6 +717,7 @@ class DecartVton {
     if (_initialized) {
       await _platform.release();
       _initialized = false;
+      _nativeClientCredentialUnused = false;
     }
     try {
       await _platform.initialize(
@@ -689,9 +727,11 @@ class DecartVton {
         logLevel: configuration.logLevel.name,
       );
       _initialized = true;
+      _nativeClientCredentialUnused = true;
     } catch (_) {
       // Do not claim a released or partially-created native client is usable.
       _initialized = false;
+      _nativeClientCredentialUnused = false;
       rethrow;
     }
   }
@@ -731,19 +771,30 @@ class DecartVton {
     return result;
   }
 
-  void _validateOutfit(VtonOutfit outfit, VtonModel model) => _validateFields(
-    prompt: outfit.prompt,
-    referenceImage: outfit.referenceImage,
-    model: model,
-  );
+  Future<void> _validateOutfit(VtonOutfit outfit, VtonModel model) =>
+      _validateFields(
+        prompt: outfit.prompt,
+        referenceImage: outfit.referenceImage,
+        referenceImagePath: outfit.referenceImagePath,
+        model: model,
+      );
 
-  void _validateFields({
+  Future<void> _validateFields({
     required String? prompt,
     required Uint8List? referenceImage,
+    required String? referenceImagePath,
     required VtonModel model,
-  }) {
+  }) async {
     final hasPrompt = prompt != null && prompt.trim().isNotEmpty;
-    final hasImage = referenceImage != null && referenceImage.isNotEmpty;
+    final hasImageBytes = referenceImage != null && referenceImage.isNotEmpty;
+    final hasImagePath =
+        referenceImagePath != null && referenceImagePath.trim().isNotEmpty;
+    if (hasImageBytes && hasImagePath) {
+      throw ArgumentError(
+        'Pass either referenceImage or referenceImagePath, not both.',
+      );
+    }
+    final hasImage = hasImageBytes || hasImagePath;
     if (!hasPrompt && !hasImage) {
       throw ArgumentError(
         'An outfit update needs at least a non-blank prompt or a reference '
@@ -761,12 +812,45 @@ class DecartVton {
         'send a prompt only.',
       );
     }
-    if (hasImage) _validateReferenceImage(referenceImage);
+    if (hasImageBytes) _validateReferenceImage(referenceImage);
+    if (hasImagePath) {
+      await _validateReferenceImagePath(referenceImagePath.trim());
+    }
   }
 
-  void _validateReferenceImage(Uint8List bytes) {
-    const maxBytes = 5 * 1024 * 1024;
-    if (bytes.length > maxBytes) {
+  Future<void> _validateReferenceImagePath(String path) async {
+    RandomAccessFile? handle;
+    try {
+      final file = File(path);
+      final stat = await file.stat();
+      if (stat.type != FileSystemEntityType.file) {
+        throw const FileSystemException('Path is not a regular file.');
+      }
+      if (stat.size > _maxReferenceImageBytes) {
+        throw const DecartVtonException.local(
+          VtonErrorCode.invalidInput,
+          'Reference images must be 5 MB or smaller.',
+        );
+      }
+      handle = await file.open();
+      final header = await handle.read(12);
+      _validateReferenceImage(header, totalLength: stat.size);
+    } on DecartVtonException {
+      rethrow;
+    } on FileSystemException catch (error) {
+      throw DecartVtonException.local(
+        VtonErrorCode.invalidInput,
+        'Could not read reference image at "$path": ${error.message}',
+      );
+    } finally {
+      await handle?.close();
+    }
+  }
+
+  static const int _maxReferenceImageBytes = 5 * 1024 * 1024;
+
+  void _validateReferenceImage(Uint8List bytes, {int? totalLength}) {
+    if ((totalLength ?? bytes.length) > _maxReferenceImageBytes) {
       throw const DecartVtonException.local(
         VtonErrorCode.invalidInput,
         'Reference images must be 5 MB or smaller.',
@@ -825,8 +909,8 @@ class DecartVton {
   }
 }
 
-/// Snapshot of the arguments a session was opened with, so [DecartVton.switchCamera]
-/// can rebuild an identical session on the other camera.
+/// Snapshot of the arguments a session was opened with, so lifecycle recovery
+/// can rebuild an identical session.
 class _ConnectRequest {
   const _ConnectRequest({
     required this.model,

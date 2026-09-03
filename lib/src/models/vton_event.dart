@@ -86,7 +86,7 @@ final class VtonRemoteStreamUpdated extends VtonEvent {
   String toString() => 'VtonRemoteStreamUpdated()';
 }
 
-/// A new local camera track was created (initial capture, or camera switch).
+/// The local camera track was created or its capturer changed.
 final class VtonLocalStreamUpdated extends VtonEvent {
   /// Creates the event.
   const VtonLocalStreamUpdated();

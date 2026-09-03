@@ -155,8 +155,8 @@ of confusion in Decart's own docs (they flag it twice). Three deliberate choices
    effect; that is never what someone typing `setOutfit()` meant. Blank/whitespace
    prompts count as absent.
 
-Mixing `outfit:` with `prompt:`/`referenceImage:` also throws — there is no
-sensible precedence rule, so there is no rule.
+Mixing `outfit:` with `prompt:`/`referenceImage:`/`referenceImagePath:` also
+throws — there is no sensible precedence rule, so there is no rule.
 
 ### 3.3 Errors
 
@@ -210,8 +210,9 @@ Platform view type: `ai.decart.vton/video_view`.
 | Method | Arguments | Reply |
 | --- | --- | --- |
 | `initialize` | `apiKey: String`, `signalingBaseUrl: String`, `httpBaseUrl: String`, `logLevel: String` | `null` |
-| `connect` | `model: String`, `width: int`, `height: int`, `fps: int`, `supportsReferenceImage: bool`, `facing: "front"\|"back"`, `mirror: "off"\|"on"\|"auto"`, `resolution: "720p"\|"1080p"\|null`, `connectTimeoutMs: int`, `video: {maxBitrate, maxFramerate, preferredCodec, simulcast}`, `prompt: String?`, `referenceImage: Uint8List?`, `enhance: bool` | `{sessionId: String?}` |
-| `setOutfit` | `prompt: String?`, `referenceImage: Uint8List?`, `enhance: bool`, `timeoutMs: int` | `null` |
+| `connect` | `model: String`, `width: int`, `height: int`, `fps: int`, `supportsReferenceImage: bool`, `facing: "front"\|"back"`, `mirror: "off"\|"on"\|"auto"`, `resolution: "720p"\|"1080p"\|null`, `connectTimeoutMs: int`, `video: {maxBitrate, maxFramerate, preferredCodec, simulcast}`, `prompt: String?`, `referenceImage: Uint8List?`, `referenceImagePath: String?`, `enhance: bool` | `{sessionId: String?}` |
+| `setOutfit` | `prompt: String?`, `referenceImage: Uint8List?`, `referenceImagePath: String?`, `enhance: bool`, `timeoutMs: int` | `null` |
+| `switchCamera` | `facing: "front"\|"back"` | `{facing: "front"\|"back"}` |
 | `disconnect` | — | `null` |
 | `release` | — | `null` |
 | `isConnected` | — | `bool` |
@@ -220,8 +221,6 @@ Platform view type: `ai.decart.vton/video_view`.
 Errors are returned as `result.error(code, message, null)` where `code` is one
 of the strings in `ErrorCodes` (Kotlin) / `ErrorCodes` (Swift). Those two sets
 are identical by design so `VtonErrorCode.fromNative` needs one table.
-
-There is deliberately **no `switchCamera` method** — see §7.3.
 
 ### Events
 
@@ -281,7 +280,9 @@ All the state: `DecartClient`, `RealTimeClient`, the local and remote
   share one LiveKit `Room` — which in turn is what gives `VtonLocalPreview` an
   `EglBase` to render against. If the handshake throws, the local stream is
   disposed before rethrowing so a failed connect never leaves the camera on.
-- **`setOutfit`** is where the §2.1 routing lives.
+- **`setOutfit`** is where the §2.1 routing lives. Byte-backed images retain
+  the original API. File-backed images are read on `Dispatchers.IO` and streamed
+  directly into Android's Base64 encoder, avoiding a second raw-image buffer.
 - **`teardownStreams`** disposes the caller-owned local stream. The SDK is
   explicit that failing to do so leaks the underlying `Room` and its native
   resources. The remote stream is SDK-owned, so it is only dereferenced.
@@ -375,6 +376,9 @@ Two iOS-specific wrinkles:
   not discrete events. The controller diffs successive snapshots against
   `lastConnectionState` / `lastSessionId` / `lastTick` to produce the discrete
   events the wire contract specifies.
+- **File-backed reference images use memory-mapped `Data`.** Only the path
+  crosses the channel; Swift validates the file and uses `.mappedIfSafe` before
+  handing normal `Data` to `DecartPrompt`.
 
 `ensureCameraAuthorised()` mirrors Android's permission pre-check, and
 distinguishes `.notDetermined` from `.denied` in the message because the fixes
@@ -437,30 +441,29 @@ What the Dart layer papers over, and what it cannot.
 | iOS has no error flow, only an `error` state | The Swift controller synthesises a `type: "error"` event on the transition to `.error`, so `DecartVton.errors` is not permanently silent on iOS — but it carries no specific cause, because the SDK does not provide one. |
 | iOS Simulator cannot capture | No workaround exists. |
 
-### 7.3 `switchCamera` is Dart-side on purpose
+### 7.3 `switchCamera` preserves the live session
 
-Neither SDK exposes an in-session camera flip on its public API at the wrapped
-versions. LiveKit's `LocalVideoTrack` almost certainly can do it, and iOS's
-`CameraCapturer.switchCameraPosition()` exists — but reaching around the Decart
-SDK into a transitive dependency's internals would couple this plugin to
-LiveKit's version, and would produce *different* behaviour on the two platforms
-depending on which route worked.
+`switchCamera()` crosses the method channel because both pinned native stacks
+provide a verified, public in-session mechanism:
 
-So `switchCamera()` is implemented in **Dart**, as `disconnect()` → `connect()`
-with the flipped camera, the same model and settings, and `currentOutfit`
-restored. Identical on both platforms, built only from verified public API.
+- Android casts the Decart stream's video track to LiveKit `LocalVideoTrack`
+  and calls `restartTrack`. LiveKit transfers the existing renderers and updates
+  the current sender, so the Room is not disconnected. The controller rebuilds
+  Decart's mirror processor for the selected lens because `.auto` mirrors only
+  the front camera. `AndroidMirrorProcessorFactory.java` is a narrow interop
+  shim: Decart's processor is a public JVM class but carries Kotlin `internal`
+  metadata, so Java can construct the SDK implementation while Kotlin cannot.
+- iOS obtains LiveKit's `CameraCapturer` from the existing `LocalVideoTrack` and
+  calls `set(cameraPosition:)`. It then updates Decart's
+  `MirroringVideoProcessor.cameraPosition`, as required by Decart's own SDK
+  documentation.
 
-**If the reconnect is unacceptable for your use case**, the faster path is:
-
-- Android: cast `RealtimeMediaStream.videoTrack` to LiveKit's `LocalVideoTrack`
-  and call its camera-switch method; the published track stays the same, so no
-  renegotiation is needed.
-- iOS: reach the `CameraCapturer` behind the `LocalVideoTrack` and call
-  `switchCameraPosition()`.
-
-Both need verification against the LiveKit version that Decart currently pins
-(`livekit-android 2.25.3` / `client-sdk-swift ≥ 2.5.0`), and both should be
-guarded so a failure falls back to the reconnect path.
+The Dart controller updates `cameraFacing` only after native success. No token
+is minted, the session ID and outfit state stay unchanged, and a failed switch
+surfaces as `CAMERA_UNAVAILABLE` rather than silently replacing the session.
+This code is intentionally covered by native compilation because it relies on
+the LiveKit versions pinned transitively by `decart-android` 0.7.10 and
+`decart-ios` 0.6.10.
 
 ### 7.4 One accepted asymmetry at connect time
 
@@ -641,7 +644,8 @@ Nothing below can be established by a compiler:
 - Renderer rebinding after a forced reconnect (turn the network off and on).
 - Background/foreground via `VtonLifecycleObserver`, including that the camera
   indicator goes out on background.
-- `switchCamera()` restoring the previous outfit.
+- In-session `switchCamera()` in both directions, including `.auto` mirroring
+  and an unavailable second lens.
 - Release-build behaviour on Android with R8 enabled — the consumer ProGuard
   rules are the thing being tested, and their failure mode is release-only.
 
@@ -665,6 +669,8 @@ decart_vton_flutter/
 ├── android/
 │   ├── build.gradle              JitPack + pinned SDK version + minSdk 24 + Java 17
 │   ├── consumer-rules.pro        R8 keeps (duplicated from the SDK on purpose)
+│   ├── src/main/java/ai/decart/vton/flutter/
+│   │   └── AndroidMirrorProcessorFactory.java  Kotlin-internal SDK interop shim
 │   └── src/main/kotlin/ai/decart/vton/flutter/
 │       ├── DecartVtonPlugin.kt           thin dispatcher
 │       ├── VtonSessionController.kt      all session state; the routing fix

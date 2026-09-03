@@ -162,6 +162,10 @@ public class DecartVtonPlugin: NSObject, FlutterPlugin {
                     try await session.setOutfit(args)
                     box.reply(nil)
 
+                case "switchCamera":
+                    let facing = try await session.switchCamera(args)
+                    box.reply(["facing": facing])
+
                 case "disconnect":
                     await session.disconnect()
                     box.reply(nil)
