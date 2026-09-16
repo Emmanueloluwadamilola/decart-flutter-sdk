@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# The Phase 4 verification loop, as one command.
+# The package verification loop, as one command.
 #
 #   tool/verify.sh              # contract + analyze + format + tests + Android build
 #   tool/verify.sh --ios        # also build iOS (macOS + Xcode 16 required)

@@ -122,8 +122,10 @@ class VtonConnectivityReport {
 
   /// How media would travel: `udp`, `relay` (TURN) or `failed`.
   ///
-  /// `relay` still works but adds latency. `failed` means UDP egress is blocked
-  /// and a realtime session will not establish.
+  /// `relay` means direct UDP could not be confirmed and a real session would
+  /// need TURN; whether that relay path works is not verified by this probe.
+  /// `failed` means no WebRTC connectivity was gathered, so a realtime session
+  /// is unlikely to establish.
   final String transport;
 
   /// Measured round-trip time to the STUN server, in milliseconds, if known.

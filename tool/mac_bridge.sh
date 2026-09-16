@@ -6,21 +6,20 @@
 #
 #  WHAT IT IS
 #
-#  The Cowork session cannot reach your Mac's shell. It has a cloud container
-#  (no Flutter, no network to pub.dev) and a sandboxed Linux VM on your machine
-#  (no Flutter, no network) — neither is macOS, so neither can see your
-#  toolchain.
+#  This is a legacy fallback for remote or isolated agent environments that
+#  cannot execute Flutter or Xcode commands on your Mac directly. If your
+#  current tooling can run those commands locally, do not use this bridge.
 #
 #  What both sides *can* see is this project folder. This script turns that
-#  shared folder into a command channel: the session writes a shell script into
+#  shared folder into a command channel: the agent writes a shell script into
 #  .bridge/requests/, this loop executes it here on macOS where Flutter and
 #  Xcode actually live, and writes the output back to .bridge/responses/ where
-#  the session can read it.
+#  the agent can read it.
 #
 #  ---------------------------------------------------------------------------
 #  READ THIS BEFORE RUNNING IT
 #
-#  This gives the session arbitrary command execution on your Mac, with your
+#  This gives the agent arbitrary command execution on your Mac, with your
 #  user's permissions, for as long as the loop is running. That is the whole
 #  point of it, but it is worth saying plainly rather than burying.
 #
@@ -39,7 +38,7 @@
 #
 #  USAGE
 #
-#    tool/mac_bridge.sh              # bridge; runs session commands as they arrive
+#    tool/mac_bridge.sh              # bridge; runs agent commands as they arrive
 #    tool/mac_bridge.sh --confirm    # same, but asks before each command
 #    tool/mac_bridge.sh --once       # no bridge: just run bootstrap + verify,
 #                                    #   write the log, exit. Nothing arbitrary.

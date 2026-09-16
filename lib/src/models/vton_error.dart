@@ -60,8 +60,9 @@ enum VtonErrorCode {
   /// An outfit update was sent but the server nacked it or never acked it.
   promptRejected,
 
-  /// The operation was superseded or cancelled — for example a second
-  /// `setOutfit` overtaking one still in flight.
+  /// The native SDK cancelled an in-flight operation, commonly during session
+  /// teardown. Public Dart operations are serialized and do not overtake one
+  /// another.
   cancelled,
 
   /// Anything that could not be classified. Check [DecartVtonException.nativeCode].
@@ -129,11 +130,12 @@ enum VtonErrorCode {
   }
 }
 
-/// The only exception type this package throws.
+/// The normalized exception type for native SDK and plugin-domain failures.
 ///
 /// A raw `PlatformException` never escapes the plugin: everything crossing the
-/// method channel is funnelled through one converter, so callers can write a
-/// single `on DecartVtonException catch (e)` and switch on [code].
+/// method channel is funnelled through one converter, so callers can catch this
+/// type and switch on [code]. Invalid arguments can still throw [ArgumentError],
+/// and invalid lifecycle or widget state can throw [StateError].
 class DecartVtonException implements Exception {
   /// Creates an exception.
   const DecartVtonException(

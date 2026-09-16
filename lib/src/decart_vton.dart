@@ -430,7 +430,8 @@ class DecartVton {
   /// - [VtonErrorCode.invalidInput] if a [referenceImage] is supplied for a
   ///   model where [VtonModel.supportsReferenceImage] is `false`;
   /// - [VtonErrorCode.promptRejected] if the server nacks the update;
-  /// - [VtonErrorCode.cancelled] if a later `setOutfit` supersedes this one.
+  /// - [VtonErrorCode.cancelled] if the native SDK cancels the in-flight
+  ///   update, for example during session teardown.
   Future<void> setOutfit({
     String? prompt,
     Uint8List? referenceImage,

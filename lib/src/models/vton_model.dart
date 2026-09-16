@@ -136,7 +136,8 @@ enum VtonMirrorMode {
 /// **Android only.** The Decart iOS SDK has no runtime log-level control at
 /// v0.6.10 — it prints errors unconditionally and everything else only when the
 /// `ENABLE_DECART_SDK_DUBUG_LOGS=YES` environment variable is set in the Xcode
-/// scheme. This value is silently ignored on iOS rather than pretending to work.
+/// scheme (the upstream variable is spelled `DUBUG`). This value is silently
+/// ignored on iOS rather than pretending to work.
 ///
 /// Note also that the Android SDK forces LiveKit's own logger and the native
 /// WebRTC logger to `OFF` regardless of this setting, so this controls Decart's

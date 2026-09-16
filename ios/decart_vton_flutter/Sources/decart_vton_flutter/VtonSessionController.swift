@@ -436,8 +436,8 @@ final class VtonSessionController {
         if state.connectionState != lastConnectionState {
             emitConnectionState(state.connectionState)
             // Android forwards the SDK's dedicated `errors` flow onto the event
-            // channel. The iOS SDK has no such flow — a mid-session failure it
-            // does not throw from surfaces only as this state transition. Without
+            // channel. The iOS SDK has no such flow, so a mid-session failure that
+            // is not thrown can surface only as this state transition. Without
             // synthesising an error event here, `DecartVton.errors` would never
             // emit anything at all on iOS.
             if state.connectionState == .error {

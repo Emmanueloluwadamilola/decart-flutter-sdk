@@ -36,7 +36,7 @@ example/ios/Runner.xcodeproj/xcuserdata/
 ios/**/.swiftpm/xcode/xcuserdata/
 .DS_Store
 
-# mac_bridge.sh scratch — command channel between the Cowork session and macOS
+# Legacy agent bridge scratch — command channel to a macOS shell
 .bridge/
 
 # IDE

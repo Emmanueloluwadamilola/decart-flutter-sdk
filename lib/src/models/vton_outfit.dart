@@ -59,14 +59,14 @@ class VtonOutfit {
   /// Encoded garment reference image bytes: JPEG, PNG or WebP.
   ///
   /// Guidance from the reference-images doc: use a clean product shot of the
-  /// garment alone on a plain background, at least 512x512, ideally under 5 MB.
+  /// garment alone on a plain background, at least 512x512 and 5 MB or smaller.
   /// If your source shows a person wearing the item, extract the garment first.
   ///
   /// Only meaningful for models where [VtonModel.supportsReferenceImage] is
   /// `true`.
   final Uint8List? referenceImage;
 
-  /// Absolute path to an encoded JPEG, PNG or WebP garment image.
+  /// File-system path to an encoded JPEG, PNG or WebP garment image.
   ///
   /// Prefer this when an image picker or camera already produced a local file.
   /// Native code reads the file directly, avoiding a large Dart heap allocation

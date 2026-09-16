@@ -5,12 +5,10 @@
 #
 # WHY THIS EXISTS
 # ---------------
-# `example/android/` and `example/ios/` are Flutter-generated scaffolding —
-# Gradle wrappers, an Xcode `.pbxproj`, launch storyboards. Those are machine
-# artefacts, not source, and hand-writing an Xcode project file is not a
-# reasonable thing to do. So the repository ships the parts that *are* source
-# (Dart, the plugin's own native code, pubspec, env.example) and this script
-# generates the rest, then patches it.
+# The repository includes the generated `example/android/` and `example/ios/`
+# scaffolding so the example works immediately after checkout. This script can
+# regenerate missing folders, or refresh them with --force, then reapply the
+# project-specific Android and iOS settings required by this plugin.
 #
 # Safe to re-run: it regenerates into a temp directory and only copies folders
 # that are missing, unless you pass --force.

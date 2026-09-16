@@ -1,6 +1,6 @@
 [![pub package](https://img.shields.io/pub/v/decart_vton_flutter.svg)](https://pub.dev/packages/decart_vton_flutter)
 [![CI](https://github.com/Emmanueloluwadamilola/decart-flutter-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/Emmanueloluwadamilola/decart-flutter-sdk/actions/workflows/ci.yml)
-[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/Emmanueloluwadamilola/decart-flutter-sdk/blob/master/LICENSE)
 
 Realtime virtual try-on for Flutter, backed by Decart's native Lucy VTON SDKs.
 Stream the device camera as WebRTC video for AR try-on, clothes try-on, and live
@@ -23,9 +23,7 @@ This is an independent Flutter wrapper and is not an official Decart package.
 
 ## Demo
 
-<!-- TODO: replace with an actual GIF or MP4 of the outfit-swap flow.
-     Host in /assets or /doc in the repo and reference with an absolute
-     GitHub raw URL so it renders correctly on pub.dev, not just GitHub. -->
+![Decart VTON Flutter example](screenshots/example.png)
 
 ## Features
 
@@ -384,8 +382,9 @@ state is available through `connectionState`, `isConnected`, `isInitialized`,
 ## Error handling
 
 Listen to the `errors` broadcast stream to react to non-fatal problems reported
-mid-session. Fatal errors are thrown by the method that caused them as
-`DecartVtonException` values.
+mid-session. Native SDK and plugin-domain failures are thrown by the method that
+caused them as `DecartVtonException` values. Local API misuse can throw
+`ArgumentError`, while invalid lifecycle or widget state can throw `StateError`.
 
 ```dart
 vton.errors.listen((error) {
@@ -420,8 +419,10 @@ tokens itself. Host apps remain responsible for:
 - reviewing Decart's current terms, privacy policy, retention commitments and
   data-processing agreement for their jurisdiction.
 
-See [SECURITY.md](SECURITY.md) for vulnerability reporting and
-[PRIVACY.md](PRIVACY.md) for integration guidance.
+See [SECURITY.md](https://github.com/Emmanueloluwadamilola/decart-flutter-sdk/blob/master/SECURITY.md)
+for vulnerability reporting and
+[PRIVACY.md](https://github.com/Emmanueloluwadamilola/decart-flutter-sdk/blob/master/PRIVACY.md)
+for integration guidance.
 
 ## Limitations
 
@@ -429,16 +430,17 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting and
 - Camera switching briefly interrupts local capture while the other lens opens,
   but preserves the Decart session and session ID.
 - Audio and batch/queue APIs are not exposed.
-- Android platform views use hybrid composition.
 - Android uses hybrid composition for reliable native rendering. Avoid animating
   large translucent Flutter layers over the video on low-end devices.
 - Camera capture is unavailable in the iOS Simulator.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Full API reference:
+See [CONTRIBUTING.md](https://github.com/Emmanueloluwadamilola/decart-flutter-sdk/blob/master/CONTRIBUTING.md).
+Full API reference:
 https://pub.dev/documentation/decart_vton_flutter/latest/. Report issues at the
 [GitHub issue tracker](https://github.com/Emmanueloluwadamilola/decart-flutter-sdk/issues).
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Decart, Lucy and the Decart SDKs are the property
+MIT — see [LICENSE](https://github.com/Emmanueloluwadamilola/decart-flutter-sdk/blob/master/LICENSE).
+Decart, Lucy and the Decart SDKs are the property
 of Decart AI; use of the service is governed by Decart's terms.
