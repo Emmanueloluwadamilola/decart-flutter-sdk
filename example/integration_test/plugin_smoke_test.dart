@@ -19,7 +19,7 @@ void main() {
     await tester.tap(find.text('Start camera'));
     await tester.pumpAndSettle();
     expect(find.text('Developer configuration missing'), findsOneWidget);
-    expect(find.textContaining('tool/run_example.sh'), findsOneWidget);
+    expect(find.textContaining('example/lib/main.dart'), findsOneWidget);
     expect(find.byType(TextField), findsNothing);
   });
 }

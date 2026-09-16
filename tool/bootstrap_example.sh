@@ -279,5 +279,6 @@ log "Resolving packages…"
 
 log "Done. Next:"
 echo "    tool/verify.sh                 # analyze + test + build both platforms"
-echo "    cp -n example/env.example example/.env"
-echo "    tool/run_example.sh            # loads example/.env automatically"
+echo "    # Debug: set _developmentApiKey in example/lib/main.dart"
+echo "    # Production: cp -n example/env.example example/.env, then set the endpoint"
+echo "    tool/run_example.sh"

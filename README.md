@@ -290,31 +290,20 @@ For the fastest local setup, a Flutter **debug build only** can initialize with
 a permanent test API key:
 
 ```dart
-const developmentApiKey = String.fromEnvironment('DECART_API_KEY');
+// Local debug only. Never commit a real key.
+const developmentApiKey = 'dct_your_temporary_test_key';
 
 await DecartVton().initializeForDevelopment(
   apiKey: developmentApiKey,
 );
 ```
 
-Put the key in an ignored local `.env` file rather than Dart source or shell
-history:
-
-```bash
-DECART_API_KEY=dct_your_test_key
-```
-
-Then run the app with:
-
-```bash
-flutter run --dart-define-from-file=.env
-```
-
 `initializeForDevelopment` throws in profile and release builds. This is an
 intentional safety boundary, not an obfuscation feature: the key is still
 compiled into the debug application and can be extracted. Use a separate test
-key, never commit it, never distribute the build, and rotate it after shared
-testing. Do not use this method in an app-store build or production application.
+key, paste it only for the local run, remove it immediately afterwards, never
+commit it, never distribute the build, and rotate it after shared testing. Do
+not use this method in an app-store build or production application.
 
 Before production, replace it with `initialize(clientTokenProvider: ...)` and
 follow Decart's official
@@ -323,8 +312,8 @@ follow Decart's official
 ### Run the bundled example
 
 The example supports both modes without showing any credential field to users.
-Its `.env` is passed as a compile-time define rather than bundled as a Flutter
-asset.
+For production, its `.env` supplies only the public token-endpoint URL as a
+compile-time define rather than bundling the file as a Flutter asset.
 
 From the package root:
 
@@ -338,10 +327,11 @@ For production, edit `example/.env` and enable:
 DECART_TOKEN_ENDPOINT=https://your-backend.com/decart/client-token
 ```
 
-For a local debug prototype instead, enable:
+For a local debug prototype instead, leave the endpoint unset and edit the
+constant near the top of `example/lib/main.dart`:
 
-```bash
-DECART_API_KEY=dct_your_test_key
+```dart
+const String _developmentApiKey = 'dct_your_temporary_test_key';
 ```
 
 Configure only one mode. The helper and example reject mixed configuration so a
@@ -353,13 +343,19 @@ Then launch it:
 tool/run_example.sh
 ```
 
-The helper validates the configuration and runs
-`flutter run --dart-define-from-file=.env`. Any normal `flutter run` arguments
-can follow it, for example `tool/run_example.sh -d <device-id>`.
+The helper loads `example/.env` when it contains a production endpoint;
+otherwise it starts the debug example with the in-code development constant.
+Any normal `flutter run` arguments can follow it, for example
+`tool/run_example.sh -d <device-id>`.
 
-For Windows or without the helper, run this inside `example/`:
+For Windows or without the helper, run `flutter run` inside `example/`. Add the
+define file only when using the production token endpoint:
 
 ```bash
+# In-code debug key:
+flutter run
+
+# Production token endpoint:
 flutter run --dart-define-from-file=.env
 ```
 

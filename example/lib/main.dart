@@ -14,9 +14,12 @@ Future<void> main() async {
 }
 
 const String _tokenEndpoint = String.fromEnvironment('DECART_TOKEN_ENDPOINT');
-const String _developmentApiKey = String.fromEnvironment('DECART_API_KEY');
-const int _maxReferenceImageBytes = 5 * 1024 * 1024;
 
+// Local debug builds only: paste a temporary Decart `dct_...` test key here.
+// Never commit a real key, distribute the resulting build, or use this path in
+// production. Leave this empty when DECART_TOKEN_ENDPOINT is configured.
+const String _developmentApiKey = '';
+const int _maxReferenceImageBytes = 5 * 1024 * 1024;
 
 Future<Uint8List> _readLimitedResponse(
   HttpClientResponse response, {
@@ -294,7 +297,8 @@ class _TryOnPageState extends State<TryOnPage> {
   Future<bool> _ensureDeveloperConfiguration() async {
     if (_tokenEndpoint.isNotEmpty && _developmentApiKey.isNotEmpty) {
       throw const FormatException(
-        'Configure either DECART_TOKEN_ENDPOINT or DECART_API_KEY, not both.',
+        'Configure either DECART_TOKEN_ENDPOINT or the in-code development '
+        'API key, not both.',
       );
     }
     if (_tokenEndpoint.isNotEmpty || _developmentApiKey.isNotEmpty) return true;
@@ -307,11 +311,9 @@ class _TryOnPageState extends State<TryOnPage> {
         title: const Text('Developer configuration missing'),
         content: const Text(
           'This example does not ask users for credentials. Configure either '
-          'the production client-token endpoint or the debug-only API key '
-          'before launching it:\n\n'
-          'cp -n example/env.example example/.env\n'
-          '# Edit example/.env, then run:\n'
-          'tool/run_example.sh',
+          'the production client-token endpoint, or paste a temporary debug-only '
+          'dct_ test key into _developmentApiKey near the top of '
+          'example/lib/main.dart.',
         ),
         actions: <Widget>[
           TextButton(
@@ -524,6 +526,7 @@ class _TryOnPageState extends State<TryOnPage> {
   @override
   Widget build(BuildContext context) {
     final live = _state.isLive;
+    final sessionActive = _state.isInSession;
     return Scaffold(
       body: LayoutBuilder(
         builder: (BuildContext context, BoxConstraints constraints) => Stack(
@@ -544,6 +547,12 @@ class _TryOnPageState extends State<TryOnPage> {
               child: Stack(
                 fit: StackFit.expand,
                 children: <Widget>[
+                  if (sessionActive)
+                    Positioned(
+                      top: 0,
+                      right: 0,
+                      child: _buildLocalPreview(constraints.maxWidth),
+                    ),
                   Positioned(
                     left: 0,
                     right: 0,
@@ -595,6 +604,37 @@ class _TryOnPageState extends State<TryOnPage> {
       VtonRemoteView(),
     ],
   );
+
+  Widget _buildLocalPreview(double availableWidth) {
+    final width = (availableWidth * .28).clamp(96.0, 132.0);
+    return Semantics(
+      image: true,
+      label: 'Live view from your camera',
+      child: IgnorePointer(
+        child: Container(
+          width: width,
+          height: width * 4 / 3,
+          decoration: BoxDecoration(
+            color: const Color(0xFF111218),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0x99FFFFFF), width: 1.5),
+            boxShadow: const <BoxShadow>[
+              BoxShadow(
+                color: Color(0x66000000),
+                blurRadius: 20,
+                offset: Offset(0, 8),
+              ),
+            ],
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: VtonLocalPreview(
+            fit: VtonVideoFit.cover,
+            mirror: _vton.cameraFacing == VtonCameraFacing.front,
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _buildCustomizer({Key? key, required double maxHeight}) =>
       ConstrainedBox(
@@ -1039,7 +1079,7 @@ class _TryOnPageState extends State<TryOnPage> {
       ),
       const SizedBox(width: 8),
       IconButton.filledTonal(
-        tooltip: 'Switch camera (reconnects)',
+        tooltip: 'Switch camera',
         onPressed: _busy || !live ? null : _switchCamera,
         icon: const Icon(Icons.cameraswitch_outlined, size: 20),
         style: IconButton.styleFrom(
