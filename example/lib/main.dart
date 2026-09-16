@@ -160,7 +160,6 @@ class _TryOnPageState extends State<TryOnPage> {
   @override
   void initState() {
     super.initState();
-    _promptController.text = _presets.first.$2;
     _attachObservers();
   }
 
