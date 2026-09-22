@@ -36,7 +36,7 @@ example/ios/Runner.xcodeproj/xcuserdata/
 ios/**/.swiftpm/xcode/xcuserdata/
 .DS_Store
 
-# Legacy agent bridge scratch — command channel to a macOS shell
+# Local IPC scratch
 .bridge/
 
 # IDE

@@ -9,8 +9,7 @@
 //
 // …even though the engine writes it once at load and never touches it again.
 // `nonisolated(unsafe)` on a local copy does NOT help: the initializer
-// expression still reads the global, so the error just moves to that line
-// (verified — it did exactly that).
+// expression still reads the global, so the diagnostic moves to that line.
 //
 // `@preconcurrency import` is the mechanism the language provides for this
 // case: it downgrades concurrency diagnostics for declarations coming out of a

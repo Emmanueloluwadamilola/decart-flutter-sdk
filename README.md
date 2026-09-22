@@ -12,6 +12,7 @@ This is an independent Flutter wrapper and is not an official Decart package.
 ## Contents
 
 - [Features](#features)
+- [Architecture](#architecture)
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Quick start](#quick-start)
@@ -41,6 +42,14 @@ This is an independent Flutter wrapper and is not an official Decart package.
 The package provides one Dart API across Android and iOS, with unified
 authentication and lifecycle management through `VtonLifecycleObserver` rather
 than requiring each host app to build and maintain its own platform-channel bridge.
+
+## Architecture
+
+Flutter sends lifecycle and outfit commands through platform channels while
+Decart's native SDKs keep camera capture, LiveKit/WebRTC transport, and video
+rendering native. See the
+[architecture overview](https://github.com/Emmanueloluwadamilola/decart-flutter-sdk/blob/master/docs/architecture.md)
+for the complete end-to-end flow and platform responsibilities.
 
 ## Requirements
 
