@@ -1,6 +1,6 @@
 .github/
 .bridge/
-doc/
+/doc/api/
 /tool/*
 !/tool/run_example.sh
 /build/

@@ -48,7 +48,7 @@ than requiring each host app to build and maintain its own platform-channel brid
 Flutter sends lifecycle and outfit commands through platform channels while
 Decart's native SDKs keep camera capture, LiveKit/WebRTC transport, and video
 rendering native. See the
-[architecture overview](https://github.com/Emmanueloluwadamilola/decart-flutter-sdk/blob/master/docs/architecture.md)
+[architecture overview](https://github.com/Emmanueloluwadamilola/decart-flutter-sdk/blob/master/doc/architecture.md)
 for the complete end-to-end flow and platform responsibilities.
 
 ## Requirements
