@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.1
+
+Documentation and repository-maintenance release.
+
+- Adds a clickable Google Drive video demo and updated package screenshot.
+- Adds a public architecture overview and refreshes the specification and
+  maintainer documentation for the current native integrations.
+- Corrects API documentation for errors, connectivity results, cancelled
+  operations, and reference-image requirements.
+- Clarifies the example application's Android configuration and regeneration
+  tooling.
+- Removes the obsolete local macOS command-bridge script.
+
 ## 1.0.0
 
 Stable release consolidating the existing realtime virtual try-on integration.
@@ -18,7 +31,7 @@ Stable release consolidating the existing realtime virtual try-on integration.
 
 ## 0.1.0
 
-Initial pub.dev release.
+Initial development release.
 
 - Realtime virtual try-on wrapping `DecartAI/decart-android` 0.7.10 and
   `DecartAI/decart-ios` v0.6.10, including VTON 3.5 at 1280x720.

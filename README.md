@@ -24,7 +24,9 @@ This is an independent Flutter wrapper and is not an official Decart package.
 
 ## Demo
 
-[![Watch the Decart VTON Flutter demo](screenshots/example.png)](https://drive.google.com/file/d/1Iz-HymP2KUrCFlWOy2nvn5QdmZXLZNSO/view?usp=sharing)
+<a href="https://drive.google.com/file/d/1Iz-HymP2KUrCFlWOy2nvn5QdmZXLZNSO/view?usp=sharing">
+  <img src="screenshots/example.png" alt="Watch the Decart VTON Flutter demo" width="320">
+</a>
 
 [▶ Watch the demo video on Google Drive](https://drive.google.com/file/d/1Iz-HymP2KUrCFlWOy2nvn5QdmZXLZNSO/view?usp=sharing)
 

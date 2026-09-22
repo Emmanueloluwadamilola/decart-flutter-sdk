@@ -2,7 +2,7 @@ name: decart_vton_flutter
 description: >-
   Realtime Decart virtual try-on for Flutter with live camera streaming,
   garment images, prompts, camera switching, and Android/iOS platform views.
-version: 1.0.0
+version: 1.0.1
 homepage: https://github.com/Emmanueloluwadamilola/decart-flutter-sdk
 repository: https://github.com/Emmanueloluwadamilola/decart-flutter-sdk
 issue_tracker: https://github.com/Emmanueloluwadamilola/decart-flutter-sdk/issues
